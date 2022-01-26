@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { bezierUtils } from '$lib/bezierUtils'
+
 	import * as paper from 'paper'
 	import { onMount } from 'svelte'
 
@@ -18,6 +20,8 @@
 
 	let inputPoint = new paper.Point(0, 0)
 	let resultPoint = new paper.Point(inputPoint.x, fn(inputPoint.x))
+
+	let addingSegment: paper.Segment | undefined = undefined
 
 	const bezier = (input) => {
 		// return input
@@ -73,17 +77,28 @@
 		mounted = true
 	})
 
-	const onClick = (e: paper.MouseEvent) => {
-		const segment = path.divideAt(path.getNearestLocation(e.point))
-		console.log(segment.point.set(e.point))
+	const onClick = (e: paper.MouseEvent) => {}
+
+	const onMouseDown = (e: paper.MouseEvent) => {
+		addingSegment = path.divideAt(path.getNearestLocation(e.point))
+		addingSegment.point.set(e.point)
 		path = path
 	}
 
-	const onMouseDown = (e: paper.MouseEvent) => {}
-
-	const onMouseUp = (e: paper.MouseEvent) => {}
+	const onMouseUp = (e: paper.MouseEvent) => {
+		addingSegment = undefined
+	}
 
 	const onMouseMove = (e: paper.MouseEvent) => {
+		if (addingSegment) {
+			addingSegment.handleOut = addingSegment.point.subtract(e.point).multiply(-1)
+			addingSegment.handleOut.selected = true
+
+			addingSegment.handleIn = addingSegment.point.subtract(e.point)
+			addingSegment.handleIn.selected = true
+			path = path
+		}
+
 		inputPoint = e.point.divide(size)
 	}
 
@@ -95,31 +110,70 @@
 		showTest = false
 	}
 
+	const getLinearReturn = (p0: paper.Point, p1: paper.Point) => {
+		return `return ((${p1.y} - ${p0.y}) / (${p1.x} - ${p0.x})) * (input - ${p0.x}) + ${p0.y}`
+	}
+
+	const getT = (p0: paper.Point, p1: paper.Point) => {
+		return `const mt = ((input - ${p0.x}) * (1 - 0)) / (${p1.x} - ${p0.x}) + 0 * 2`
+	}
+
+	const map = (value, inMin, inMax, outMin, outMax) => {
+		return ((value - inMin) * (outMax - outMin)) / (inMax - inMin) + outMin
+	}
+
 	$: {
 		if (path) {
-			const x1 = 0
-			const x2 = 400
-			const y1 = 0
-			const y2 = 400
-			const x = 200
-			const y = ((y2 - y1) / (x2 - x1)) * (x - x1) + y1
+			fnBody = path.segments.reduce((acc, s) => {
+				if (acc.length || !s.point || !s.next || !s.next.point) return acc
+				const linear = s.handleOut.length === 0 && s.next.handleIn.length === 0
+				if (linear) return acc
+				acc = bezierUtils
+				return acc
+			}, '')
 
-			fnBody = ''
 			path.segments.forEach((s, index, arr) => {
 				if (!s.point || !s.next || !s.next.point) return
-				const x1 = s.point.x / 400
-				const x2 = s.next.point.x / 400
-				const y1 = s.point.y / 400
-				const y2 = s.next.point.y / 400
-				if (arr.length === 2) {
-					fnBody += `  return ((${y2} - ${y1}) / (${x2} - ${x1})) * (input - ${x1}) + ${y1}`
-				} else {
-					if (index === arr.length - 2) {
-						fnBody += `  return ((${y2} - ${y1}) / (${x2} - ${x1})) * (input - ${x1}) + ${y1}`
+
+				const linear = s.handleOut.length === 0 && s.next.handleIn.length === 0
+
+				const p0 = s.point.divide(size)
+				const p1 = s.next.point.divide(size)
+
+				if (linear) {
+					if (arr.length === 2) {
+						fnBody += `  ${getLinearReturn(p0, p1)}`
 					} else {
-						fnBody += `  if (input < ${x2}) {\n`
-						fnBody += `    return ((${y2} - ${y1}) / (${x2} - ${x1})) * (input - ${x1}) + ${y1}`
-						fnBody += '\n  }\n'
+						if (index === arr.length - 2) {
+							fnBody += `  ${getLinearReturn(p0, p1)}`
+						} else {
+							fnBody += `  if (input < ${p1.x}) {\n`
+							fnBody += `    ${getLinearReturn(p0, p1)}`
+							fnBody += '\n  }\n'
+						}
+					}
+				} else {
+					const h0 = s.point.divide(size).add(s.handleOut.divide(size))
+					const h1 = s.next.point.divide(size).add(s.next.handleIn.divide(size))
+
+					const h0x = map(h0.x, p0.x, p1.x, 0, 1)
+					const h0y = map(h0.y, p0.y, p1.y, 0, 1)
+					const h1x = map(h1.x, p0.x, p1.x, 0, 1)
+					const h1y = map(h1.y, p0.y, p1.y, 0, 1)
+
+					if (arr.length === 2) {
+						fnBody += `  ${getT(p0, p1)}\n`
+						fnBody += `  return map(bezier(${h0x}, ${h0y}, ${h1x}, ${h1y})(mt), 0, 1, ${p0.y}, ${p1.y})`
+					} else {
+						if (index === arr.length - 2) {
+							fnBody += `  ${getT(p0, p1)}\n`
+							fnBody += `  return map(bezier(${h0x}, ${h0y}, ${h1x}, ${h1y})(mt), 0, 1, ${p0.y}, ${p1.y})`
+						} else {
+							fnBody += `  if (input < ${p1.x}) {\n`
+							fnBody += `    ${getT(p0, p1)}\n`
+							fnBody += `    return map(bezier(${h0x}, ${h0y}, ${h1x}, ${h1y})(mt), 0, 1, ${p0.y}, ${p1.y})`
+							fnBody += '\n  }\n'
+						}
 					}
 				}
 			})
@@ -153,7 +207,7 @@ y: {resultPoint.y}
     </code>
   </pre>
 
-	<pre class="p-4 mt-10 bg-gray-200">
+	<pre class="p-4 mt-10 bg-gray-200 overflow-scroll max-w-full">
     <code>{fnstart}{fnBody}{fnEnd}</code>
   </pre>
 </div>
