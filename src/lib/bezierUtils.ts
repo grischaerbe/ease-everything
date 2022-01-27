@@ -1,4 +1,7 @@
-export const bezierUtils = `
+export const bezierUtils = `// https://github.com/gre/bezier-easing
+  const kSTS=11,kSSS=1/(kSTS-1),map=(n,t,S,r,u)=>(n-t)*(u-r)/(S-t)+r;function A(n,t){return 1-3*t+3*n}function B(n,t){return 3*t-6*n}function C(n){return 3*n}function cB(n,t,S){return((A(t,S)*n+B(t,S))*n+C(t))*n}function gS(n,t,S){return 3*A(t,S)*n*n+2*B(t,S)*n+C(t)}function bS(n,t,S,r,u){let c,o,e=0;do{(c=cB(o=t+(S-t)/2,r,u)-n)>0?S=o:t=o}while(Math.abs(c)>1e-7&&++e<10);return o}function nRI(n,t,S,r){for(let u=0;u<4;++u){const u=gS(t,S,r);if(0===u)return t;t-=(cB(t,S,r)-n)/u}return t}function b(n,t,S,r){if(!(0<=n&&n<=1&&0<=S&&S<=1))return;const u=new Float32Array(kSTS);if(n!==t||S!==r)for(let t=0;t<kSTS;++t)u[t]=cB(t*kSSS,n,S);return c=>n===t&&S===r?c:0===c||1===c?c:cB(function(t){let r=0,c=1;const o=kSTS-1;for(;c!==o&&u[c]<=t;++c)r+=kSSS;const e=r+(t-u[--c])/(u[c+1]-u[c])*kSSS,f=gS(e,n,S);return f>=.001?nRI(t,e,n,S):0===f?e:bS(t,r,r+kSSS,n,S)}(c),t,r)}`
+
+export const bezierUtilsDecompressed = `
 const kSplineTableSize = 11
 const kSampleStepSize = 1.0 / (kSplineTableSize - 1.0)
 
