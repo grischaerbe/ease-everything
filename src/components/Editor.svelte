@@ -24,6 +24,7 @@
 		transformSelectedItems
 	} from '$lib/editorUtils'
 	import type { EditorState, SelectedItem } from '$lib/types'
+	import { replaceStateWithQuery } from '$lib/utils'
 	import ClipboardJS from 'clipboard'
 	import * as paper from 'paper'
 	import { onMount } from 'svelte'
@@ -103,12 +104,19 @@
 
 		const p = new paper.Path()
 		getState().path = p
-		const json = $page.url.searchParams.get('path')
-		console.log(json)
+		const params = new URLSearchParams(document.location.search)
+		const pathJson = params.get('path')
 
-		if (json) {
-			p.importJSON(json)
-		} else {
+		let imported = false
+		if (pathJson) {
+			try {
+				p.importJSON(decodeURIComponent(pathJson))
+				imported = true
+			} catch (error) {
+				console.error(error)
+			}
+		}
+		if (!imported) {
 			p.moveTo(new paper.Point(0, 0))
 			p.lineTo(new paper.Point([state.view.size, state.view.size]))
 		}
@@ -216,18 +224,9 @@
 				state.fnHasError = true
 			}
 			if (!state.fnHasError) {
-				const currentUrlParamsPath = $page.url.searchParams.has('path')
-					? ($page.url.searchParams.get('path') as string)
-					: undefined
-
-				if (currentUrlParamsPath !== pathJson) {
-					$page.url.searchParams.set('path', pathJson)
-					goto($page.url.href.replace($page.url.origin, ''), {
-						replaceState: true,
-						noscroll: true,
-						keepfocus: true
-					})
-				}
+				replaceStateWithQuery({
+					path: pathJson
+				})
 				state.previousPathJson = pathJson
 			}
 		}
