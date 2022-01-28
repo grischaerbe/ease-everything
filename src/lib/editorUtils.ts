@@ -1,8 +1,11 @@
 import * as paper from 'paper'
 import { bezierUtils } from './bezierUtils'
+import type { EditorState, SelectedItem, SelectedItems } from './types'
 
-export const insertPointToPath = (path: paper.Path, point: paper.Point): paper.Segment | null => {
-	if (path.segments.length === 0) return null
+export const insertPointToPath = (path: paper.Path, point: paper.Point): paper.Segment => {
+	if (path.segments.length === 0) {
+		throw new Error('Path has no segments')
+	}
 	const nearestSegment = path.segments.reduce(
 		(acc, s) => {
 			const d = point.x - s.point.x
@@ -62,6 +65,11 @@ export const getNearestPointOfPath = (
 	}
 }
 
+export const segmentIsPartiallySmooth = (segment: paper.Segment): boolean => {
+	if (segment.handleIn.length > 0 || segment.handleOut.length > 0) return true
+	return false
+}
+
 export const segmentIsPartiallyLinear = (segment: paper.Segment): boolean => {
 	if (segment.handleIn.length === 0 || segment.handleOut.length === 0) return true
 	return false
@@ -101,12 +109,14 @@ export const drawGridLines = (
 }
 
 export const map = (
-	value: number,
-	inMin: number,
-	inMax: number,
-	outMin: number,
-	outMax: number
+	value: number, // 0
+	inMin: number, // 0
+	inMax: number, // 0
+	outMin: number, // 0
+	outMax: number // 1
 ) => {
+	// edge case, but still...
+	if (inMin - inMax === 0) return outMin
 	return ((value - inMin) * (outMax - outMin)) / (inMax - inMin) + outMin
 }
 
@@ -192,8 +202,344 @@ export const functionFromPath = (
 		}
 	}
 
+	const edges = [0, 1]
+	edges.forEach((edge) => {
+		try {
+			newFn(edge)
+		} catch (error) {
+			throw new Error('Function has errors')
+		}
+	})
+
 	return {
 		fn: newFn,
 		fnBody
 	}
+}
+
+export const selectedItemAddedAt = (selectedItem: SelectedItem, state: EditorState) => {
+	const item = findSelectedItemFromState(selectedItem, state)
+	if (item) {
+		return item.addedAt
+	} else {
+		return 0
+	}
+}
+
+export const findSelectedItemFromState = (selectedItem: SelectedItem, state: EditorState) => {
+	return state.selectedItems.find((i) => {
+		return i.segment === selectedItem.segment && i.item === selectedItem.item
+	})
+}
+
+export const isSelected = (selectedItem: SelectedItem, state: EditorState): boolean => {
+	return !!state.selectedItems.find((i) => {
+		return i.segment === selectedItem.segment && i.item === selectedItem.item
+	})
+}
+
+export const findSelectedIndex = (selectedItem: SelectedItem, state: EditorState) => {
+	return state.selectedItems.findIndex((i) => {
+		return i.segment === selectedItem.segment && i.item === selectedItem.item
+	})
+}
+
+export const hitTestPath = (e: paper.MouseEvent, path: paper.Path, tolerance: number) => {
+	return path.hitTest(e.point, {
+		tolerance,
+		segments: true,
+		points: true,
+		handles: true,
+		stroke: false
+	})
+}
+
+export const clearSelectedItems = (state: EditorState) => {
+	state.selectedItems.splice(0, state.selectedItems.length)
+}
+
+export const removeSelectedItem = (selectedItem: SelectedItem, state: EditorState) => {
+	const index = findSelectedIndex(selectedItem, state)
+	if (index !== -1) {
+		state.selectedItems.splice(index, 1)
+	}
+}
+
+export const addSelectedItem = (selectedItem: SelectedItem, state: EditorState) => {
+	if (!isSelected(selectedItem, state)) {
+		const addedAt = Date.now()
+
+		state.selectedItems.push({
+			...selectedItem,
+			addedAt
+		})
+	}
+}
+
+export const recentlyAdded = (selectedItem: SelectedItem, state: EditorState) => {
+	if (isSelected(selectedItem, state)) {
+		const addedAt = selectedItemAddedAt(selectedItem, state)
+		return Date.now() - addedAt < 300
+	}
+	return false
+}
+
+export const toggleSelectedItem = (selectedItem: SelectedItem, state: EditorState) => {
+	if (isSelected(selectedItem, state)) removeSelectedItem(selectedItem, state)
+	else addSelectedItem(selectedItem, state)
+}
+
+export const maybeAddSelectedItem = (e: paper.MouseEvent, state: EditorState) => {
+	if (!state.path) return
+
+	const result = hitTestPath(e, state.path, state.tolerance)
+
+	// the mousedown event happens first
+	if (e.type === 'mousedown') {
+		if (!result) {
+			// if there's no result, the user could still try
+			// to select or modify things with modifier keys
+			// so we skip the clearing of selectedItems in this case
+			if (!e.modifiers.shift && !e.modifiers.alt) {
+				clearSelectedItems(state)
+			}
+		} else {
+			// we have a result.
+			const selectedItem: SelectedItem = {
+				item: result.type as SelectedItem['item'],
+				segment: result.segment
+			}
+			if (e.modifiers.alt) {
+				// the user probably wants to modify items
+				if (!isSelected(selectedItem, state)) {
+					// user clicked on a non-selected item
+					clearSelectedItems(state)
+					addSelectedItem(selectedItem, state)
+				}
+			} else if (e.modifiers.shift) {
+				// add items
+				addSelectedItem(selectedItem, state)
+			} else {
+				// if no modifier was pressed, we can assume the user
+				// wanted to select a new item
+				clearSelectedItems(state)
+				addSelectedItem(selectedItem, state)
+			}
+		}
+	}
+
+	// this event happens after mousedown
+	if (e.type === 'click') {
+		if (result) {
+			// there is a result
+			const selectedItem: SelectedItem = {
+				item: result.type as SelectedItem['item'],
+				segment: result.segment
+			}
+
+			if (e.modifiers.shift) {
+				// the user pressed the shift key, indicating
+				// to add to the current selection of items
+				// but we need to check for interference with
+				// the mousedown event
+				if (!recentlyAdded(selectedItem, state)) {
+					toggleSelectedItem(selectedItem, state)
+				}
+			}
+		}
+	}
+}
+
+export const drawSelection = (state: EditorState) => {
+	if (!state.layers.selectionLayer) return
+	state.layers.selectionLayer.removeChildren()
+	state.selectedItems.forEach((selectedItem) => {
+		if (!state.layers.selectionLayer) return
+		const p =
+			selectedItem.item === 'handle-in'
+				? selectedItem.segment.point.add(selectedItem.segment.handleIn)
+				: selectedItem.item === 'handle-out'
+				? selectedItem.segment.point.add(selectedItem.segment.handleOut)
+				: selectedItem.segment.point
+		const shape = new paper.Shape.Circle(p, 5)
+		shape.strokeWidth = 2
+		shape.strokeColor = new paper.Color('rgb(251 146 60)')
+		state.layers.selectionLayer.addChild(shape)
+	})
+}
+
+export const isFirstOrLastSegment = (item: SelectedItem) => {
+	return item.segment.isLast() || item.segment.isFirst()
+}
+
+export const mirrorHandle = (leaderHandle: paper.Point, followerHandle: paper.Point) => {
+	followerHandle.set(leaderHandle.multiply(-1))
+}
+
+export const transformSelectedItems = (e: paper.MouseEvent, state: EditorState) => {
+	if (!state.selectedItems.length) return
+
+	const mouseDelta = e.point.subtract(
+		state.mouse.lastMouseDownEvent?.point ?? new paper.Point(0, 0)
+	)
+
+	if (e.modifiers.control) {
+		showGrid16(state)
+	} else {
+		showGrid4(state)
+	}
+
+	state.selectedItems.forEach((item) => {
+		if (!item.frozenPoint) return
+		if (item.item === 'handle-in') {
+			let newPoint = item.frozenPoint.add(mouseDelta)
+			if (e.modifiers.control) {
+				newPoint = snapToGrid(newPoint, state)
+			}
+			item.segment.handleIn.set(newPoint.subtract(item.segment.point))
+			if (e.modifiers.alt) mirrorHandle(item.segment.handleIn, item.segment.handleOut)
+		} else if (item.item === 'handle-out') {
+			let newPoint = item.frozenPoint.add(mouseDelta)
+			if (e.modifiers.control) {
+				newPoint = snapToGrid(newPoint, state)
+			}
+			item.segment.handleOut.set(newPoint.subtract(item.segment.point))
+			if (e.modifiers.alt) mirrorHandle(item.segment.handleOut, item.segment.handleIn)
+		} else if (item.item === 'segment') {
+			let newPoint = item.frozenPoint.add(mouseDelta)
+			if (e.modifiers.control) {
+				newPoint = snapToGrid(newPoint, state)
+			}
+			item.segment.point.set(newPoint)
+
+			if (item.segment.isFirst()) {
+				item.segment.point.x = 0
+			} else if (item.segment.isLast()) {
+				item.segment.point.x = 1 * state.view.size
+			}
+		}
+	})
+}
+
+/**
+ * Freeze the point of a selectedItem to transform it absolutely
+ */
+export const freezeSelectedItems = (state: EditorState) => {
+	state.selectedItems.forEach((selectedItem) => {
+		const p =
+			selectedItem.item === 'handle-in'
+				? selectedItem.segment.point.add(selectedItem.segment.handleIn)
+				: selectedItem.item === 'handle-out'
+				? selectedItem.segment.point.add(selectedItem.segment.handleOut)
+				: selectedItem.segment.point.clone()
+
+		selectedItem.frozenPoint = p
+	})
+}
+
+export const snapToGrid = (point: paper.Point, state: EditorState, gridCells = 16) => {
+	return point
+		.divide(state.view.size)
+		.multiply(gridCells)
+		.round()
+		.divide(gridCells)
+		.multiply(state.view.size)
+}
+
+export const mouseEventIsClick = (e: paper.MouseEvent, state: EditorState) => {
+	const deltaTime = e.timeStamp - (state.mouse.lastMouseDownEvent?.timeStamp ?? 0)
+	const deltaPoint = e.point.subtract(
+		state.mouse.lastMouseDownEvent?.point ?? new paper.Point(0, 0)
+	)
+	return deltaTime < 300 && deltaPoint.length < 3
+}
+
+export const maybeModifySelectedItemsOnClick = (
+	e: paper.MouseEvent,
+	state: EditorState
+): boolean => {
+	if (!state.selectedItems.length) return false
+
+	if (e.modifiers.alt) {
+		const points = state.selectedItems.filter((item) => {
+			return item.item === 'segment'
+		})
+
+		const nums = {
+			handlesWithLength: 0,
+			handlesWithoutLength: 0
+		}
+		points.forEach((s) => {
+			if (s.segment.handleIn.length) nums.handlesWithLength += 1
+			else nums.handlesWithoutLength += 1
+			if (s.segment.handleOut.length) nums.handlesWithLength += 1
+			else nums.handlesWithoutLength += 1
+		})
+
+		const onlyLinear = nums.handlesWithLength === 0
+
+		if (onlyLinear) {
+			points.forEach((item) => {
+				if (item.segment.isFirst()) {
+					const nextPoint = item.segment.next.point
+					const dir = item.segment.point.subtract(nextPoint).multiply(-1)
+					dir.length = 0.1 * state.view.size
+					item.segment.handleOut.set(dir)
+				} else if (item.segment.isLast()) {
+					const previousPoint = item.segment.previous.point
+					const dir = item.segment.point.subtract(previousPoint).multiply(-1)
+					dir.length = 0.1 * state.view.size
+					item.segment.handleIn.set(dir)
+				} else {
+					item.segment.smooth()
+				}
+			})
+		} else {
+			points.forEach((item) => {
+				item.segment.handleIn.length = 0
+				item.segment.handleOut.length = 0
+				const s1: SelectedItem = {
+					item: 'handle-in',
+					segment: item.segment
+				}
+				const s2: SelectedItem = {
+					item: 'handle-out',
+					segment: item.segment
+				}
+				removeSelectedItem(s1, state)
+				removeSelectedItem(s2, state)
+			})
+		}
+
+		return true
+	}
+
+	return false
+}
+
+export const deleteSelectedItems = (state: EditorState) => {
+	state.selectedItems.forEach((item) => {
+		if (!item.segment.isFirst() && !item.segment.isLast()) {
+			item.segment.remove()
+			removeSelectedItem(item, state)
+		}
+	})
+}
+
+export const showGrid16 = (state: EditorState) => {
+	if (!state.layers.grid16 || !state.layers.grid4) return
+	state.layers.grid4.visible = false
+	state.layers.grid16.visible = true
+}
+
+export const showGrid4 = (state: EditorState) => {
+	if (!state.layers.grid16 || !state.layers.grid4) return
+	state.layers.grid16.visible = false
+	state.layers.grid4.visible = true
+}
+
+export const resetGrid = showGrid4
+
+export const setCursor = (cursor: EditorState['mouse']['cursor'], state: EditorState) => {
+	state.mouse.cursor = cursor
 }

@@ -1,27 +1,65 @@
-<script lang="ts">
+<script context="module" lang="ts">
 	import { goto } from '$app/navigation'
 	import { page } from '$app/stores'
+	import { useKeyDown } from '$hooks/useKeyDown'
 	import { useKeyUp } from '$hooks/useKeyUp'
 	import { useRaf } from '$hooks/useRaf'
 	import { useWheel } from '$hooks/useWheel'
 	import {
+		addSelectedItem,
+		clearSelectedItems,
+		deleteSelectedItems,
 		drawGridLines,
+		drawSelection,
+		freezeSelectedItems,
 		functionFromPath,
+		hitTestPath,
 		insertPointToPath,
-		makeSegmentLinear,
-		segmentIsLinear,
-		segmentIsPartiallyLinear
+		map,
+		maybeAddSelectedItem,
+		maybeModifySelectedItemsOnClick,
+		mouseEventIsClick,
+		resetGrid,
+		setCursor,
+		transformSelectedItems
 	} from '$lib/editorUtils'
+	import type { EditorState, SelectedItem } from '$lib/types'
 	import ClipboardJS from 'clipboard'
 	import * as paper from 'paper'
 	import { onMount } from 'svelte'
+</script>
 
+<script lang="ts">
 	let canvas: HTMLCanvasElement | undefined
 	let copyBtn: HTMLButtonElement | undefined
 
-	let size = 400
-
-	let path: paper.Path | undefined
+	const state: EditorState = {
+		view: {
+			size: 400,
+			isAnimating: false
+		},
+		path: undefined,
+		mouse: {
+			isMouseDown: false,
+			lastMouseDownEvent: undefined,
+			cursor: 'cursor-crosshair'
+		},
+		mounted: false,
+		fnHasError: false,
+		selectedItems: [],
+		tolerance: 20,
+		layers: {
+			default: undefined,
+			grid4: undefined,
+			grid16: undefined,
+			selectionLayer: undefined
+		}
+	}
+	const getState = () => state
+	const stateUpdated = (reason?: string) => {
+		if (reason) console.log(reason)
+		state.path = state.path
+	}
 
 	let fnstart = 'function interpolate(t) {\n'
 	let fnBody = '  return t'
@@ -29,19 +67,13 @@
 
 	let fn = new Function('t', fnBody)
 
-	let mounted = false
-
-	let fnHasError = false
-
-	let tolerance = 30
-
 	let resultCircle: paper.Shape.Circle | undefined
 	let selectedCircle: paper.Shape.Circle | undefined
 	let selectionToolCircle: paper.Shape.Circle | undefined
 
 	const setViewSize = () => {
-		paper.view.viewSize.width = size
-		paper.view.viewSize.height = size
+		paper.view.viewSize.width = state.view.size
+		paper.view.viewSize.height = state.view.size
 	}
 
 	const installEventListeners = () => {
@@ -55,7 +87,7 @@
 		resultCircle.fillColor = new paper.Color('rgb(239 68 68)')
 		resultCircle.visible = false
 
-		selectionToolCircle = new paper.Shape.Circle(new paper.Point(0, 0), tolerance)
+		selectionToolCircle = new paper.Shape.Circle(new paper.Point(0, 0), state.tolerance)
 		selectionToolCircle.visible = false
 		selectionToolCircle.fillColor = new paper.Color('rgba(19, 147, 224, 0.1)')
 
@@ -68,18 +100,25 @@
 		if (!canvas || !copyBtn) return
 		paper.setup(canvas)
 
-		path = new paper.Path()
+		const p = new paper.Path()
+		getState().path = p
 		const json = $page.url.searchParams.get('path')
 		if (json) {
-			path.importJSON(json)
+			p.importJSON(json)
 		} else {
-			path.moveTo(new paper.Point(0, 0))
-			path.lineTo(new paper.Point([size, size]))
+			p.moveTo(new paper.Point(0, 0))
+			p.lineTo(new paper.Point([state.view.size, state.view.size]))
 		}
 
-		path.fullySelected = true
-		paper.view.autoUpdate = true
+		p.fullySelected = true
 		paper.view.scale(1, -1)
+
+		state.layers.default = paper.project.activeLayer
+		state.layers.selectionLayer = new paper.Layer()
+		state.layers.grid4 = new paper.Layer()
+		state.layers.grid16 = new paper.Layer()
+		state.layers.grid16.visible = false
+		state.layers.default.activate()
 
 		drawUtils()
 
@@ -87,258 +126,153 @@
 
 		installEventListeners()
 
+		state.layers.grid4.activate()
 		drawGridLines(4, 4, paper.view.bounds)
+		state.layers.grid16.activate()
+		drawGridLines(16, 16, paper.view.bounds)
+		state.layers.default.activate()
 
 		new ClipboardJS(copyBtn)
-		mounted = true
+		state.mounted = true
+		stateUpdated('mounted')
 	})
 
-	const hitTestPath = (e: paper.MouseEvent) => {
-		if (!path) return
-		return path.hitTest(e.point, {
-			tolerance,
-			segments: true,
-			points: true,
-			handles: true,
-			stroke: false
-		})
-	}
+	const onClick = (e: paper.MouseEvent) => {
+		const modifiedSelectedItems = maybeModifySelectedItemsOnClick(e, state)
 
-	let mouseEventStart: paper.MouseEvent | null = null
-
-	const handleClick = (e: paper.MouseEvent) => {
-		if (!path) return
-		const result = hitTestPath(e)
-
-		if (result?.type === 'segment') {
-			if (e.modifiers.shift) {
-				if (segmentIsLinear(result.segment)) {
-					if (result.segment.isFirst()) {
-						const nextPoint = result.segment.next.point
-						const dir = result.segment.point.subtract(nextPoint).multiply(-1)
-						dir.length = 0.1 * size
-						result.segment.handleOut.set(dir)
-					} else if (result.segment.isLast()) {
-						const previousPoint = result.segment.previous.point
-						const dir = result.segment.point.subtract(previousPoint).multiply(-1)
-						dir.length = 0.1 * size
-						result.segment.handleIn.set(dir)
-					} else {
-						result.segment.smooth()
-					}
-				} else if (segmentIsPartiallyLinear(result.segment)) {
-					if (!result.segment.handleIn.length) {
-						result.segment.handleIn.set(result.segment.handleOut.multiply(-1))
-					} else {
-						result.segment.handleOut.set(result.segment.handleIn.multiply(-1))
-					}
-				} else {
-					makeSegmentLinear(result.segment)
-				}
-			}
+		if (!modifiedSelectedItems) {
+			maybeAddSelectedItem(e, state)
 		}
-		path = path
-	}
 
-	let selectedItem: 'handle-in' | 'handle-out' | 'segment' | null = null
-	let selectedSegment: paper.Segment | null = null
-	let isMouseDown = false
-
-	const select = (segment: paper.Segment, item: 'point' | 'handle-in' | 'handle-out' = 'point') => {
-		if (selectedCircle && selectedSegment) {
-			switch (item) {
-				case 'point':
-					selectedCircle.position.set(segment.point)
-					break
-				case 'handle-out':
-					selectedCircle.position.set(segment.point.add(segment.handleOut))
-					break
-				case 'handle-in':
-					selectedCircle.position.set(segment.point.add(segment.handleIn))
-					break
-				default:
-					break
-			}
-			selectedCircle.visible = true
-		}
-	}
-
-	const deselect = () => {
-		if (selectedCircle) {
-			selectedCircle.visible = false
-		}
+		drawSelection(state)
+		stateUpdated('click')
 	}
 
 	const onMouseDown = (e: paper.MouseEvent) => {
-		mouseEventStart = e
-		isMouseDown = true
-		if (resultCircle) resultCircle.visible = false
+		getState().mouse.isMouseDown = true
+		getState().mouse.lastMouseDownEvent = e
+		if (!state.path) return
+		maybeAddSelectedItem(e, state)
 
-		if (!path) return
-
-		const result = hitTestPath(e)
-
-		if (result && selectionToolCircle) {
-			selectionToolCircle.position.set(result.point)
-			selectionToolCircle.visible = true
-		}
-
-		if (result?.type === 'segment') {
-			selectedItem = 'segment'
-			selectedSegment = result.segment
-			select(selectedSegment)
-		} else if (result?.type === 'handle-in') {
-			selectedItem = 'handle-in'
-			selectedSegment = result.segment
-			select(selectedSegment, 'handle-in')
-		} else if (result?.type === 'handle-out') {
-			selectedItem = 'handle-out'
-			selectedSegment = result.segment
-			select(selectedSegment, 'handle-out')
-		} else {
-			selectedItem = 'segment'
-			selectedSegment = insertPointToPath(path, e.point)
-			if (selectedSegment) {
-				select(selectedSegment)
+		// if nothing is selected, the user probably wants to add a new segment
+		if (!state.selectedItems.length) {
+			const newSegment = insertPointToPath(state.path, e.point)
+			const selectedItem: SelectedItem = {
+				item: 'segment',
+				segment: newSegment
 			}
+			addSelectedItem(selectedItem, state)
 		}
 
-		path = path
+		drawSelection(state)
+
+		freezeSelectedItems(state)
+
+		stateUpdated('mousedown')
 	}
 
 	const onMouseUp = (e: paper.MouseEvent) => {
-		const deltaTime = e.timeStamp - (mouseEventStart?.timeStamp ?? 0)
-		const deltaPoint = e.point.subtract(mouseEventStart?.point ?? new paper.Point(0, 0))
+		resetGrid(state)
 
-		const isClick = deltaTime < 300 && deltaPoint.length < 3
+		getState().mouse.isMouseDown = false
 
-		if (isClick) handleClick(e)
+		if (e.modifiers.shift && state.mouse.cursor !== 'cursor-copy') {
+			setCursor('cursor-copy', state)
+			stateUpdated('cursor')
+		} else if (!e.modifiers.shift && state.mouse.cursor !== 'cursor-crosshair') {
+			setCursor('cursor-crosshair', state)
+			stateUpdated('cursor')
+		}
 
-		if (resultCircle) resultCircle.visible = true
-		isMouseDown = false
+		const isClick = mouseEventIsClick(e, state)
+		if (isClick) {
+			e.type = 'click'
+			onClick(e)
+			return
+		}
+
+		stateUpdated('mouseup')
 	}
 
-	const onMouseMove = (e: paper.MouseEvent) => {
-		if (resultCircle && path && fn && !fnHasError) {
-			const t = e.point.x / size
-			const y = fn(t)
-			resultCircle.position.set(e.point.x, y * size)
-			resultCircle = resultCircle
-		}
-
-		if (!isMouseDown && path && selectionToolCircle) {
-			const result = hitTestPath(e)
-
-			if (result) {
-				selectionToolCircle.position.set(result.point)
-				selectionToolCircle.visible = true
-			} else {
-				selectionToolCircle?.position.set(e.point)
-				selectionToolCircle.visible = true
-			}
-		} else if (isMouseDown && selectionToolCircle) {
-			selectionToolCircle.visible = false
-		}
-
-		if (!selectedSegment || !isMouseDown) return
-
-		if (selectedItem === 'segment') {
-			if (selectedSegment.isFirst() || selectedSegment.isLast()) {
-				selectedSegment.point.y = e.point.y
-			} else {
-				let newPoint = e.point.clone()
-				if (e.modifiers.shift) {
-					newPoint = newPoint.divide(size).multiply(16).round().divide(16).multiply(size)
-				}
-				if (newPoint.x > selectedSegment.next.point.x) {
-					newPoint.x = selectedSegment.next.point.x
-				} else if (newPoint.x < selectedSegment.previous.point.x) {
-					newPoint.x = selectedSegment.previous.point.x
-				}
-				selectedSegment.point.set(newPoint)
-			}
-			select(selectedSegment)
-			path = path
-		} else if (selectedItem === 'handle-in') {
-			let newHandlePoint = e.point.subtract(selectedSegment.point)
-			if (e.modifiers.shift) {
-				newHandlePoint = newHandlePoint.divide(size).multiply(16).round().divide(16).multiply(size)
-			}
-			// if (e.modifiers.shift) {
-			// 	if (Math.abs(newHandlePoint.x) > Math.abs(newHandlePoint.y)) {
-			// 		newHandlePoint.y = 0
-			// 	} else {
-			// 		newHandlePoint.x = 0
-			// 	}
-			// }
-			selectedSegment.handleIn.set(newHandlePoint)
-			if (e.modifiers.alt) {
-				selectedSegment.handleOut = selectedSegment.handleIn.multiply(-1)
-			}
-			select(selectedSegment, 'handle-in')
-			path = path
-		} else if (selectedItem === 'handle-out') {
-			let newHandlePoint = e.point.subtract(selectedSegment.point)
-			if (e.modifiers.shift) {
-				newHandlePoint = newHandlePoint.divide(size).multiply(16).round().divide(16).multiply(size)
-			}
-			// if (e.modifiers.shift) {
-			// 	if (Math.abs(newHandlePoint.x) > Math.abs(newHandlePoint.y)) {
-			// 		newHandlePoint.y = 0
-			// 	} else {
-			// 		newHandlePoint.x = 0
-			// 	}
-			// }
-
-			selectedSegment.handleOut.set(newHandlePoint)
-
-			if (e.modifiers.alt) {
-				selectedSegment.handleIn = selectedSegment.handleOut.multiply(-1)
-			}
-			select(selectedSegment, 'handle-out')
-			path = path
-		}
-	}
-
-	$: {
-		if (path) {
-			const scaledPath = path.clone()
-			scaledPath.scale(1 / size, new paper.Point(0, 0))
+	const calculateFunction = () => {
+		if (state.path) {
+			const scaledPath = state.path.clone()
+			scaledPath.scale(1 / state.view.size, new paper.Point(0, 0))
 			try {
 				const { fn: newFn, fnBody: newFnBody } = functionFromPath(scaledPath)
 				fn = newFn
 				fnBody = newFnBody
-				fnHasError = false
+				state.fnHasError = false
 			} catch (error) {
-				fnHasError = true
+				state.fnHasError = true
 			}
-			if (!fnHasError) {
-				const pathJson = path.exportJSON()
-				$page.url.searchParams.set('path', pathJson)
-				goto($page.url.href, {
-					replaceState: true
-				})
+			if (!state.fnHasError) {
+				const pathJson = state.path.exportJSON()
+				const currentUrlParamsPath = $page.url.searchParams.has('path')
+					? ($page.url.searchParams.get('path') as string)
+					: undefined
+
+				if (currentUrlParamsPath !== pathJson) {
+					$page.url.searchParams.set('path', pathJson)
+					goto($page.url.href, {
+						replaceState: true,
+						noscroll: true,
+						keepfocus: true
+					})
+				}
 			}
 		}
 	}
 
-	let isAnimating = false
+	$: {
+		if (state.path) {
+			calculateFunction()
+		}
+	}
+
+	const onMouseMove = (e: paper.MouseEvent) => {
+		if (!state.layers.selectionLayer) return
+
+		if (state.path && selectionToolCircle) {
+			const result = hitTestPath(e, state.path, state.tolerance)
+			if (result) {
+				selectionToolCircle.position.set(result.point)
+			} else {
+				selectionToolCircle.position.set(e.point)
+			}
+		}
+
+		if (state.mouse.isMouseDown) {
+			transformSelectedItems(e, state)
+			drawSelection(state)
+			if (state.mouse.cursor !== 'cursor-grabbing') {
+				setCursor('cursor-grabbing', state)
+				stateUpdated('cursor-grabbing')
+			}
+		}
+	}
+
 	let t = 0
 	let y = fn(t)
 	let speed = 0.005
 	let animationCircle: paper.Shape.Circle | undefined
 	useRaf(() => {
-		if (!isAnimating || !mounted || fnHasError) return
+		if (!state.view.isAnimating || !state.mounted || state.fnHasError || state.mouse.isMouseDown) {
+			if (animationCircle) animationCircle.visible = false
+			return
+		}
 
 		if (!animationCircle) {
 			animationCircle = new paper.Shape.Circle(new paper.Point(0, 0), 10)
 			animationCircle.fillColor = new paper.Color('rgb(34 197 94)')
+		} else {
+			animationCircle.visible = true
 		}
 
 		t += speed
 		y = fn(t)
 
-		animationCircle.position.set(new paper.Point(t * size, y * size))
+		animationCircle.position.set(new paper.Point(t * state.view.size, y * state.view.size))
 
 		if (t >= 1) {
 			t = 0
@@ -346,41 +280,32 @@
 	})
 
 	useKeyUp('Backspace', () => {
-		if (selectedSegment) {
-			if (selectedItem === 'segment') {
-				selectedSegment.remove()
-			} else if (selectedItem === 'handle-in') {
-				selectedSegment.handleIn.set(0, 0)
-			} else if (selectedItem === 'handle-out') {
-				selectedSegment.handleOut.set(0, 0)
-			}
-			selectedSegment = null
-			selectedItem = null
-			path = path
-			deselect()
-		}
+		deleteSelectedItems(state)
+		drawSelection(state)
+		stateUpdated('deleted selection')
 	})
 
 	const { mouseWheelAction } = useWheel((e) => {
 		e.preventDefault()
-		const newTolerance = tolerance + e.deltaY
+		const newTolerance = state.tolerance + e.deltaY
 		if (newTolerance > 5 && newTolerance < 200) {
-			tolerance = newTolerance
+			getState().tolerance = newTolerance
 			if (!selectionToolCircle) return
-			selectionToolCircle.radius = tolerance
+			selectionToolCircle.radius = state.tolerance
 		}
 	})
 
 	const reset = () => {
-		path?.remove()
-		path = new paper.Path()
-		path.moveTo(new paper.Point(0, 0))
-		path.lineTo(new paper.Point([size, size]))
-		path.fullySelected = true
-		selectedSegment = null
-		selectedItem = null
-		path = path
-		deselect()
+		if (!state.path) return
+		state.path.remove()
+		const newPath = new paper.Path()
+		newPath.moveTo(new paper.Point(0, 0))
+		newPath.lineTo(new paper.Point([state.view.size, state.view.size]))
+		newPath.fullySelected = true
+		getState().path = newPath
+		clearSelectedItems(state)
+		drawSelection(state)
+		stateUpdated('reset')
 	}
 
 	const onPointerEnter = () => {
@@ -392,7 +317,19 @@
 		if (resultCircle) resultCircle.visible = false
 		if (selectionToolCircle) selectionToolCircle.visible = false
 	}
+
+	useKeyDown('Shift', () => {
+		setCursor('cursor-copy', state)
+		stateUpdated('shift')
+	})
+
+	useKeyUp('Shift', () => {
+		setCursor('cursor-crosshair', state)
+		stateUpdated('shift')
+	})
 </script>
+
+<!-- cursor classes: 'cursor-crosshair' | 'cursor-grabbing' | 'cursor-copy' -->
 
 <div class="relative m-10 inline-block">
 	<canvas
@@ -400,9 +337,9 @@
 		on:pointerenter={onPointerEnter}
 		on:pointerleave={onPointerLeave}
 		bind:this={canvas}
-		style:width={`${size}px`}
-		style:height={`${size}px`}
-		class="relative border border-gray-300 border"
+		style:width={`${state.view.size}px`}
+		style:height={`${state.view.size}px`}
+		class={`relative border border-gray-300 border cursor-crosshair ${state.mouse.cursor}`}
 	/>
 
 	<p class="absolute left-1/2 transform -translate-x-1/2  top-[calc(100%+6px)]">x</p>
@@ -416,49 +353,39 @@
 
 <div class="m-10 font-mono">
 	<button on:click={reset} class="px-8 py-2 bg-red-500 rounded text-white mb-5">Reset</button>
-
-	{#if selectedSegment}
-		Selected: {selectedSegment.index}
-		<div>
-			<label for="x">x: </label>
-			<input id="x" type="number" bind:value={selectedSegment.point.x} />
-		</div>
-		<div>
-			<label for="y">y: </label>
-			<input id="y" type="number" bind:value={selectedSegment.point.y} />
-		</div>
-	{/if}
 </div>
 
 <div class="m-10">
-	{#if resultCircle}
+	<!-- {#if resultCircle}
 		<pre class="mb-10">
 			 <code>
 Test:
-x: {resultCircle.position.x / size}
-y: {resultCircle.position.x / size}
+x: {resultCircle.position.x / state.view.size}
+y: {resultCircle.position.x / state.view.size}
 			 </code>
 		 </pre>
-	{/if}
+	{/if} -->
 
+	<pre
+		class="p-4 bg-gray-200 overflow-scroll max-w-full rounded"
+		class:bg-red-300={state.fnHasError}>
 	<button
-		bind:this={copyBtn}
-		data-clipboard-target="#fn"
-		class="px-8 py-2 bg-green-500 rounded text-white mb-5">Copy to Clipboard</button
-	>
-	<pre class="p-4 bg-gray-200 overflow-scroll max-w-full text-xs" class:bg-red-300={fnHasError}>
-    <code id="fn">{fnstart}{fnBody}{fnEnd}</code>
+			bind:this={copyBtn}
+			data-clipboard-target="#fn"
+			class="font-sans px-8 py-2 bg-green-500 rounded text-white mb-5">Copy to Clipboard</button
+		>
+<code class="text-xs" id="fn">{fnstart}{fnBody}{fnEnd}</code>
   </pre>
 </div>
 
 <div class="m-10">
 	<div class="flex flex-row space-x-4">
 		<button
-			class:bg-red-500={isAnimating}
-			class:bg-green-500={!isAnimating}
+			class:bg-red-500={state.view.isAnimating}
+			class:bg-green-500={!state.view.isAnimating}
 			class="px-8 py-2 rounded text-white mb-5"
-			on:click={() => (isAnimating = !isAnimating)}
-			>{isAnimating ? 'Stop Animation' : 'Start Animation'}</button
+			on:click={() => (state.view.isAnimating = !state.view.isAnimating)}
+			>{state.view.isAnimating ? 'Stop Animation' : 'Start Animation'}</button
 		>
 
 		<div class="flex flex-row i">
