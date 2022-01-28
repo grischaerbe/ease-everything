@@ -104,6 +104,8 @@
 		const p = new paper.Path()
 		getState().path = p
 		const json = $page.url.searchParams.get('path')
+		console.log(json)
+
 		if (json) {
 			p.importJSON(json)
 		} else {
