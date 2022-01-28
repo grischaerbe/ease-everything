@@ -39,6 +39,7 @@
 			isAnimating: false
 		},
 		path: undefined,
+		previousPathJson: '',
 		mouse: {
 			isMouseDown: false,
 			lastMouseDownEvent: undefined,
@@ -196,6 +197,12 @@
 
 	const calculateFunction = () => {
 		if (state.path) {
+			const pathJson = state.path.exportJSON()
+			if (pathJson === state.previousPathJson) {
+				console.log('path did not change, returning')
+				return
+			}
+
 			const scaledPath = state.path.clone()
 			scaledPath.scale(1 / state.view.size, new paper.Point(0, 0))
 			try {
@@ -207,19 +214,19 @@
 				state.fnHasError = true
 			}
 			if (!state.fnHasError) {
-				const pathJson = state.path.exportJSON()
 				const currentUrlParamsPath = $page.url.searchParams.has('path')
 					? ($page.url.searchParams.get('path') as string)
 					: undefined
 
 				if (currentUrlParamsPath !== pathJson) {
 					$page.url.searchParams.set('path', pathJson)
-					goto($page.url.href, {
+					goto($page.url.href.replace($page.url.origin, ''), {
 						replaceState: true,
 						noscroll: true,
 						keepfocus: true
 					})
 				}
+				state.previousPathJson = pathJson
 			}
 		}
 	}

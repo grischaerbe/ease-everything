@@ -15,6 +15,7 @@ export type EditorState = {
 		size: number
 		isAnimating: boolean
 	}
+	previousPathJson: string
 	path: paper.Path | undefined
 	selectedItems: SelectedItems
 	mouse: {
