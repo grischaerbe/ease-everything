@@ -518,12 +518,12 @@ export const maybeModifySelectedItemsOnClick = (
 }
 
 export const deleteSelectedItems = (state: EditorState) => {
-	state.selectedItems.forEach((item) => {
-		if (!item.segment.isFirst() && !item.segment.isLast()) {
+	state.selectedItems
+		.filter((item) => !item.segment.isLast() && !item.segment.isFirst())
+		.forEach((item) => {
 			item.segment.remove()
 			removeSelectedItem(item, state)
-		}
-	})
+		})
 }
 
 export const showGrid16 = (state: EditorState) => {
