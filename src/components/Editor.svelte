@@ -23,6 +23,7 @@
 		zoomIn,
 		zoomOut
 	} from '$lib/editorUtils'
+	import { toTypeColor } from '$lib/paperUtils'
 	import type { EditorState, SelectedItem } from '$lib/types'
 	import { replaceStateWithQuery } from '$lib/utils'
 	import {
@@ -98,11 +99,11 @@
 	const drawUtils = () => {
 		selectionToolCircle = new paper.Shape.Circle(new paper.Point(0, 0), state.tolerance)
 		selectionToolCircle.visible = false
-		selectionToolCircle.fillColor = new paper.Color('rgba(0, 0, 0, 0.1)')
+		selectionToolCircle.fillColor = toTypeColor('rgba(0, 0, 0, 0.1)')
 
 		selectedCircle = new paper.Shape.Circle(new paper.Point(0, 0), 10)
 		selectedCircle.visible = false
-		selectedCircle.fillColor = rgb(209, 213, 219, 0.6)
+		selectedCircle.fillColor = toTypeColor('rgb(209, 213, 219, 0.6)')
 	}
 
 	onMount(() => {
@@ -128,7 +129,7 @@
 			p.lineTo(new paper.Point([state.view.size, state.view.size]))
 		}
 
-		p.strokeColor = '#0F61FE'
+		p.strokeColor = toTypeColor('#0F61FE')
 		p.strokeWidth = 2
 		p.fullySelected = false
 
@@ -146,7 +147,7 @@
 			new paper.Point(0, 0),
 			new paper.Size(state.view.size, state.view.size)
 		)
-		bg.fillColor = 'white'
+		bg.fillColor = toTypeColor('white')
 		state.layers.background.sendToBack()
 
 		state.layers.segments = new paper.Layer()
@@ -304,7 +305,7 @@
 
 		if (!animationCircle) {
 			animationCircle = new paper.Shape.Circle(new paper.Point(0, 0), 10)
-			animationCircle.fillColor = '#0F61FE'
+			animationCircle.fillColor = toTypeColor('#0F61FE')
 		} else {
 			animationCircle.visible = true
 		}

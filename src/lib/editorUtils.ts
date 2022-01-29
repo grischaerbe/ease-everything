@@ -2,6 +2,7 @@ import * as paper from 'paper'
 import parserTypeScript from 'prettier/parser-typescript.js'
 import prettier from 'prettier/standalone.js'
 import { bezierUtils } from './bezierUtils'
+import { toTypeColor } from './paperUtils'
 import type { EditorState, SelectedItem } from './types'
 
 export const transpileCode = (code: string) => {
@@ -111,14 +112,14 @@ export const drawGridLines = (
 		const topPoint = new paper.Point(xPos, boundingRect.top)
 		const bottomPoint = new paper.Point(xPos, boundingRect.bottom)
 		const aLine = new paper.Path.Line(topPoint, bottomPoint)
-		aLine.strokeColor = '#dddddd'
+		aLine.strokeColor = toTypeColor('#dddddd')
 	}
 	for (let i = 0; i <= num_rectangles_tall; i++) {
 		const yPos = boundingRect.top + i * height_per_rectangle
 		const leftPoint = new paper.Point(boundingRect.left, yPos)
 		const rightPoint = new paper.Point(boundingRect.right, yPos)
 		const aLine = new paper.Path.Line(leftPoint, rightPoint)
-		aLine.strokeColor = '#dddddd'
+		aLine.strokeColor = toTypeColor('#dddddd')
 	}
 }
 
@@ -371,9 +372,9 @@ export const maybeAddSelectedItem = (e: paper.MouseEvent, state: EditorState) =>
 	}
 }
 
-const primaryColor = '#0F61FE'
-const secondaryColor = '#D91E28'
-const whiteColor = 'white'
+const primaryColor = toTypeColor('#0F61FE')
+const secondaryColor = toTypeColor('#D91E28')
+const whiteColor = toTypeColor('white')
 export const drawGraph = (state: EditorState) => {
 	if (!state.path || !state.layers.segments || !state.layers.default) return
 
