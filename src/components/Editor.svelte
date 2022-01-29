@@ -169,7 +169,7 @@
 
 		state.mounted = true
 
-		resetZoom()
+		resetZoom(state)
 
 		stateUpdated('mounted')
 	})
@@ -344,7 +344,7 @@
 		getState().path = newPath
 		clearSelectedItems(state)
 		drawGraph(state)
-		resetZoom()
+		resetZoom(state)
 		stateUpdated('reset')
 	}
 

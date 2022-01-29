@@ -1,11 +1,12 @@
 import * as paper from 'paper'
-import parserTypeScript from 'prettier/esm/parser-typescript.mjs'
-import prettier from 'prettier/esm/standalone.mjs'
-import 'typescript/lib/typescriptServices'
+import parserTypeScript from 'prettier/parser-typescript'
+import prettier from 'prettier/standalone'
 import { bezierUtils } from './bezierUtils'
 import type { EditorState, SelectedItem } from './types'
 
 export const transpileCode = (code: string) => {
+	// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+	// @ts-ignore
 	return window.ts.transpile(code)
 }
 
@@ -617,7 +618,7 @@ export const zoomOut = () => {
 	paper.view.scale(0.9)
 }
 
-export const resetZoom = () => {
+export const resetZoom = (state: EditorState) => {
 	paper.view.scaling = new paper.Point(0.8, -0.8)
 	paper.view.center = new paper.Point(state.view.size / 2, state.view.size / 2)
 }
