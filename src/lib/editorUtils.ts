@@ -1,6 +1,6 @@
 import * as paper from 'paper'
-import parserTypeScript from 'prettier/parser-typescript'
-import prettier from 'prettier/standalone'
+import parserTypeScript from 'prettier/parser-typescript.js'
+import prettier from 'prettier/standalone.js'
 import { bezierUtils } from './bezierUtils'
 import type { EditorState, SelectedItem } from './types'
 
