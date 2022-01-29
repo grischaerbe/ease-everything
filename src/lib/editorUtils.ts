@@ -1,6 +1,20 @@
 import * as paper from 'paper'
+import parserTypeScript from 'prettier/esm/parser-typescript.mjs'
+import prettier from 'prettier/esm/standalone.mjs'
+import 'typescript/lib/typescriptServices'
 import { bezierUtils } from './bezierUtils'
-import type { EditorState, SelectedItem, SelectedItems } from './types'
+import type { EditorState, SelectedItem } from './types'
+
+export const transpileCode = (code: string) => {
+	return window.ts.transpile(code)
+}
+
+export const formatCode = (code: string) => {
+	return prettier.format(code, {
+		parser: 'typescript',
+		plugins: [parserTypeScript]
+	})
+}
 
 export const insertPointToPath = (path: paper.Path, point: paper.Point): paper.Segment => {
 	if (path.segments.length === 0) {
@@ -22,7 +36,6 @@ export const insertPointToPath = (path: paper.Path, point: paper.Point): paper.S
 		}
 	)
 	const segment = path.insert(nearestSegment.segment.index + 1, point)
-	segment.selected = true
 	return segment
 }
 
@@ -121,7 +134,7 @@ export const map = (
 }
 
 const getLinearReturn = (p0: paper.Point, p1: paper.Point) => {
-	return `return ((${p1.y} - ${p0.y}) / (${p1.x} - ${p0.x})) * (t - ${p0.x}) + ${p0.y}`
+	return `return ((${p1.y} - ${p0.y}) / (${p1.x} - ${p0.x})) * (t - ${p0.x}) + ${p0.y};`
 }
 
 const getBezierReturn = (
@@ -132,7 +145,7 @@ const getBezierReturn = (
 	h1y: number,
 	p1: paper.Point
 ) => {
-	return `return map(b(${h0x}, ${h0y}, ${h1x}, ${h1y})(((t - ${p0.x}) * (1 - 0)) / (${p1.x} - ${p0.x}) + 0 * 2), 0, 1, ${p0.y}, ${p1.y})`
+	return `return map(b(${h0x}, ${h0y}, ${h1x}, ${h1y})(((t - ${p0.x}) * (1 - 0)) / (${p1.x} - ${p0.x}) + 0 * 2), 0, 1, ${p0.y}, ${p1.y});`
 }
 
 /**
@@ -140,13 +153,15 @@ const getBezierReturn = (
  * @param path The provided path, must be normalized to the length of x === 1
  */
 export const functionFromPath = (
-	path: paper.Path
+	path: paper.Path,
+	state: EditorState
 ): {
 	// eslint-disable-next-line @typescript-eslint/ban-types
 	fn: Function
-	fnBody: string
+	fnJs: string
+	fnTs: string
 } => {
-	let fnBody = path.segments.reduce((acc, s) => {
+	let fnBodyTs = path.segments.reduce((acc, s) => {
 		if (acc.length || !s.point || !s.next || !s.next.point) return acc
 		const linear = s.handleOut.length === 0 && s.next.handleIn.length === 0
 		if (linear) return acc
@@ -164,12 +179,12 @@ export const functionFromPath = (
 
 		if (linear) {
 			if (arr.length === 2) {
-				fnBody += `  ${getLinearReturn(p0, p1)}`
+				fnBodyTs += `${getLinearReturn(p0, p1)}`
 			} else {
 				if (index === arr.length - 2) {
-					fnBody += `  ${getLinearReturn(p0, p1)}`
+					fnBodyTs += `${getLinearReturn(p0, p1)}`
 				} else {
-					fnBody += `  if (t < ${p1.x}) ${getLinearReturn(p0, p1)}\n`
+					fnBodyTs += `if (t < ${p1.x}) ${getLinearReturn(p0, p1)}`
 				}
 			}
 		} else {
@@ -182,17 +197,21 @@ export const functionFromPath = (
 			const h1y = map(h1.y, p0.y, p1.y, 0, 1)
 
 			if (arr.length === 2) {
-				fnBody += `  ${getBezierReturn(p0, h0x, h0y, h1x, h1y, p1)}`
+				fnBodyTs += `${getBezierReturn(p0, h0x, h0y, h1x, h1y, p1)}`
 			} else {
 				if (index === arr.length - 2) {
-					fnBody += `  ${getBezierReturn(p0, h0x, h0y, h1x, h1y, p1)}`
+					fnBodyTs += `${getBezierReturn(p0, h0x, h0y, h1x, h1y, p1)}`
 				} else {
-					fnBody += `  if (t < ${p1.x}) ${getBezierReturn(p0, h0x, h0y, h1x, h1y, p1)} \n`
+					fnBodyTs += `if (t < ${p1.x}) ${getBezierReturn(p0, h0x, h0y, h1x, h1y, p1)} \n`
 				}
 			}
 		}
 	})
-	const newFn = new Function('t', fnBody)
+
+	const fnBodyJs = transpileCode(fnBodyTs)
+	const newFn = new Function('t', fnBodyJs)
+	const fnJs = formatCode(`function interpolate(t) {${fnBodyJs}}`)
+	const fnTs = formatCode(`function interpolate(t: number) {${fnBodyTs}}`)
 
 	for (let t = 0; t <= 1; t += 0.01) {
 		try {
@@ -213,7 +232,8 @@ export const functionFromPath = (
 
 	return {
 		fn: newFn,
-		fnBody
+		fnJs,
+		fnTs
 	}
 }
 
@@ -350,22 +370,67 @@ export const maybeAddSelectedItem = (e: paper.MouseEvent, state: EditorState) =>
 	}
 }
 
-export const drawSelection = (state: EditorState) => {
-	if (!state.layers.selectionLayer) return
-	state.layers.selectionLayer.removeChildren()
-	state.selectedItems.forEach((selectedItem) => {
-		if (!state.layers.selectionLayer) return
-		const p =
-			selectedItem.item === 'handle-in'
-				? selectedItem.segment.point.add(selectedItem.segment.handleIn)
-				: selectedItem.item === 'handle-out'
-				? selectedItem.segment.point.add(selectedItem.segment.handleOut)
-				: selectedItem.segment.point
-		const shape = new paper.Shape.Circle(p, 5)
-		shape.strokeWidth = 2
-		shape.strokeColor = new paper.Color('rgb(251 146 60)')
-		state.layers.selectionLayer.addChild(shape)
+const primaryColor = new paper.Color('#0F61FE')
+const secondaryColor = new paper.Color('#D91E28')
+const whiteColor = new paper.Color('white')
+export const drawGraph = (state: EditorState) => {
+	if (!state.path || !state.layers.segments || !state.layers.default) return
+
+	state.path.strokeColor = primaryColor
+	state.path.strokeWidth = 2
+
+	state.layers.segments.removeChildren()
+	state.layers.segments.activate()
+	state.path.segments.forEach((s) => {
+		;[s.handleIn, s.handleOut].forEach((h, i) => {
+			if (h.length === 0) return
+			const selected = isSelected(
+				{
+					item: i === 0 ? 'handle-in' : 'handle-out',
+					segment: s
+				},
+				state
+			)
+			const hAbs = s.point.add(h)
+			const line = new paper.Path.Line(s.point, hAbs)
+			line.strokeColor = primaryColor
+			line.strokeWidth = 1
+
+			if (selected) {
+				const c = new paper.Shape.Circle(hAbs, 5)
+				c.fillColor = primaryColor
+			} else {
+				const c = new paper.Shape.Circle(hAbs, 4)
+				c.strokeWidth = 1
+				c.fillColor = whiteColor
+				c.strokeColor = primaryColor
+			}
+		})
+
+		const selected = isSelected(
+			{
+				item: 'segment',
+				segment: s
+			},
+			state
+		)
+		if (selected) {
+			const r = new paper.Shape.Rectangle({
+				center: s.point,
+				size: [8, 8]
+			})
+			r.fillColor = primaryColor
+		} else {
+			const r = new paper.Shape.Rectangle({
+				center: s.point,
+				size: [7, 7]
+			})
+			r.strokeWidth = 1
+			r.fillColor = whiteColor
+			r.strokeColor = primaryColor
+		}
 	})
+	state.layers.default.activate()
 }
 
 export const isFirstOrLastSegment = (item: SelectedItem) => {
@@ -542,4 +607,17 @@ export const resetGrid = showGrid4
 
 export const setCursor = (cursor: EditorState['mouse']['cursor'], state: EditorState) => {
 	state.mouse.cursor = cursor
+}
+
+export const zoomIn = () => {
+	paper.view.scale(1.1)
+}
+
+export const zoomOut = () => {
+	paper.view.scale(0.9)
+}
+
+export const resetZoom = () => {
+	paper.view.scaling = new paper.Point(0.8, -0.8)
+	paper.view.center = new paper.Point(state.view.size / 2, state.view.size / 2)
 }

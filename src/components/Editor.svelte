@@ -1,6 +1,4 @@
 <script context="module" lang="ts">
-	import { goto } from '$app/navigation'
-	import { page } from '$app/stores'
 	import { useKeyDown } from '$hooks/useKeyDown'
 	import { useKeyUp } from '$hooks/useKeyUp'
 	import { useRaf } from '$hooks/useRaf'
@@ -9,23 +7,37 @@
 		addSelectedItem,
 		clearSelectedItems,
 		deleteSelectedItems,
+		drawGraph,
 		drawGridLines,
-		drawSelection,
 		freezeSelectedItems,
 		functionFromPath,
 		hitTestPath,
 		insertPointToPath,
-		map,
 		maybeAddSelectedItem,
 		maybeModifySelectedItemsOnClick,
 		mouseEventIsClick,
 		resetGrid,
+		resetZoom,
 		setCursor,
-		transformSelectedItems
+		transformSelectedItems,
+		zoomIn,
+		zoomOut
 	} from '$lib/editorUtils'
 	import type { EditorState, SelectedItem } from '$lib/types'
 	import { replaceStateWithQuery } from '$lib/utils'
-	import ClipboardJS from 'clipboard'
+	import {
+		Button,
+		ButtonSet,
+		CodeSnippet,
+		Column,
+		Grid,
+		ListItem,
+		Row,
+		Slider,
+		Tile,
+		Toggle,
+		UnorderedList
+	} from 'carbon-components-svelte'
 	import * as paper from 'paper'
 	import { onMount } from 'svelte'
 </script>
@@ -46,12 +58,18 @@
 			lastMouseDownEvent: undefined,
 			cursor: 'cursor-crosshair'
 		},
+		fn: new Function('t', 'return t'),
+		fnJs: '',
+		fnTs: '',
 		mounted: false,
 		fnHasError: false,
 		selectedItems: [],
 		tolerance: 20,
+		useTypeScript: false,
 		layers: {
+			background: undefined,
 			default: undefined,
+			segments: undefined,
 			grid4: undefined,
 			grid16: undefined,
 			selectionLayer: undefined
@@ -63,13 +81,6 @@
 		state.path = state.path
 	}
 
-	let fnstart = 'function interpolate(t) {\n'
-	let fnBody = '  return t'
-	let fnEnd = '\n}'
-
-	let fn = new Function('t', fnBody)
-
-	let resultCircle: paper.Shape.Circle | undefined
 	let selectedCircle: paper.Shape.Circle | undefined
 	let selectionToolCircle: paper.Shape.Circle | undefined
 
@@ -85,13 +96,9 @@
 	}
 
 	const drawUtils = () => {
-		resultCircle = new paper.Shape.Circle(new paper.Point(0, 0), 10)
-		resultCircle.fillColor = new paper.Color('rgb(239 68 68)')
-		resultCircle.visible = false
-
 		selectionToolCircle = new paper.Shape.Circle(new paper.Point(0, 0), state.tolerance)
 		selectionToolCircle.visible = false
-		selectionToolCircle.fillColor = new paper.Color('rgba(19, 147, 224, 0.1)')
+		selectionToolCircle.fillColor = new paper.Color('rgba(0, 0, 0, 0.1)')
 
 		selectedCircle = new paper.Shape.Circle(new paper.Point(0, 0), 10)
 		selectedCircle.visible = false
@@ -99,7 +106,7 @@
 	}
 
 	onMount(() => {
-		if (!canvas || !copyBtn) return
+		if (!canvas) return
 		paper.setup(canvas)
 
 		const p = new paper.Path()
@@ -121,17 +128,34 @@
 			p.lineTo(new paper.Point([state.view.size, state.view.size]))
 		}
 
-		p.fullySelected = true
-		paper.view.scale(1, -1)
+		p.strokeColor = new paper.Color('#0F61FE')
+		p.strokeWidth = 2
+		p.fullySelected = false
 
 		state.layers.default = paper.project.activeLayer
 		state.layers.selectionLayer = new paper.Layer()
+		state.layers.selectionLayer.sendToBack()
 		state.layers.grid4 = new paper.Layer()
+		state.layers.grid4.sendToBack()
 		state.layers.grid16 = new paper.Layer()
 		state.layers.grid16.visible = false
+		state.layers.grid16.sendToBack()
+		state.layers.background = new paper.Layer()
+		state.layers.background.activate()
+		const bg = new paper.Shape.Rectangle(
+			new paper.Point(0, 0),
+			new paper.Size(state.view.size, state.view.size)
+		)
+		bg.fillColor = new paper.Color('white')
+		state.layers.background.sendToBack()
+
+		state.layers.segments = new paper.Layer()
+		state.layers.segments.bringToFront()
 		state.layers.default.activate()
 
 		drawUtils()
+
+		drawGraph(state)
 
 		setViewSize()
 
@@ -143,8 +167,10 @@
 		drawGridLines(16, 16, paper.view.bounds)
 		state.layers.default.activate()
 
-		new ClipboardJS(copyBtn)
 		state.mounted = true
+
+		resetZoom()
+
 		stateUpdated('mounted')
 	})
 
@@ -155,7 +181,7 @@
 			maybeAddSelectedItem(e, state)
 		}
 
-		drawSelection(state)
+		drawGraph(state)
 		stateUpdated('click')
 	}
 
@@ -175,7 +201,7 @@
 			addSelectedItem(selectedItem, state)
 		}
 
-		drawSelection(state)
+		drawGraph(state)
 
 		freezeSelectedItems(state)
 
@@ -216,9 +242,11 @@
 			const scaledPath = state.path.clone()
 			scaledPath.scale(1 / state.view.size, new paper.Point(0, 0))
 			try {
-				const { fn: newFn, fnBody: newFnBody } = functionFromPath(scaledPath)
-				fn = newFn
-				fnBody = newFnBody
+				const result = functionFromPath(scaledPath, state)
+
+				state.fn = result.fn
+				state.fnJs = result.fnJs
+				state.fnTs = result.fnTs
 				state.fnHasError = false
 			} catch (error) {
 				state.fnHasError = true
@@ -252,7 +280,7 @@
 
 		if (state.mouse.isMouseDown) {
 			transformSelectedItems(e, state)
-			drawSelection(state)
+			drawGraph(state)
 			if (state.mouse.cursor !== 'cursor-grabbing') {
 				setCursor('cursor-grabbing', state)
 				stateUpdated('cursor-grabbing')
@@ -261,24 +289,28 @@
 	}
 
 	let t = 0
-	let y = fn(t)
+	let y = state.fn(t)
 	let speed = 0.005
 	let animationCircle: paper.Shape.Circle | undefined
 	useRaf(() => {
-		if (!state.view.isAnimating || !state.mounted || state.fnHasError || state.mouse.isMouseDown) {
+		if (state.fnHasError || !state.mounted || state.mouse.isMouseDown) {
 			if (animationCircle) animationCircle.visible = false
+			return
+		}
+
+		if (!state.view.isAnimating) {
 			return
 		}
 
 		if (!animationCircle) {
 			animationCircle = new paper.Shape.Circle(new paper.Point(0, 0), 10)
-			animationCircle.fillColor = new paper.Color('rgb(34 197 94)')
+			animationCircle.fillColor = new paper.Color('#0F61FE')
 		} else {
 			animationCircle.visible = true
 		}
 
 		t += speed
-		y = fn(t)
+		y = state.fn(t)
 
 		animationCircle.position.set(new paper.Point(t * state.view.size, y * state.view.size))
 
@@ -289,7 +321,7 @@
 
 	useKeyUp('Backspace', () => {
 		deleteSelectedItems(state)
-		drawSelection(state)
+		drawGraph(state)
 		stateUpdated('deleted selection')
 	})
 
@@ -309,20 +341,18 @@
 		const newPath = new paper.Path()
 		newPath.moveTo(new paper.Point(0, 0))
 		newPath.lineTo(new paper.Point([state.view.size, state.view.size]))
-		newPath.fullySelected = true
 		getState().path = newPath
 		clearSelectedItems(state)
-		drawSelection(state)
+		drawGraph(state)
+		resetZoom()
 		stateUpdated('reset')
 	}
 
 	const onPointerEnter = () => {
-		if (resultCircle) resultCircle.visible = true
 		if (selectionToolCircle) selectionToolCircle.visible = true
 	}
 
 	const onPointerLeave = () => {
-		if (resultCircle) resultCircle.visible = false
 		if (selectionToolCircle) selectionToolCircle.visible = false
 	}
 
@@ -337,73 +367,125 @@
 	})
 </script>
 
-<!-- cursor classes: 'cursor-crosshair' | 'cursor-grabbing' | 'cursor-copy' -->
+<Grid padding>
+	<Row>
+		<Column>
+			<h2>Graph</h2>
+		</Column>
+	</Row>
 
-<div class="relative m-10 inline-block">
-	<canvas
-		use:mouseWheelAction
-		on:pointerenter={onPointerEnter}
-		on:pointerleave={onPointerLeave}
-		bind:this={canvas}
-		style:width={`${state.view.size}px`}
-		style:height={`${state.view.size}px`}
-		class={`relative border border-gray-300 border cursor-crosshair ${state.mouse.cursor}`}
-	/>
+	<Tile>
+		<Row>
+			<Column>
+				<canvas
+					use:mouseWheelAction
+					on:pointerenter={onPointerEnter}
+					on:pointerleave={onPointerLeave}
+					bind:this={canvas}
+					style:width={`${state.view.size}px`}
+					style:height={`${state.view.size}px`}
+				/>
+			</Column>
+			<Column>
+				<div class="controls-column">
+					<div class="controls-top">
+						<h4 style="margin-bottom: 20px">Controls</h4>
+						<UnorderedList>
+							<ListItem>Click to add new point</ListItem>
+							<ListItem>Click on a point to select</ListItem>
+							<ListItem>Shift + Click to add point to selection</ListItem>
+							<ListItem>Drag to transform selection</ListItem>
+							<ListItem>Alt + Click to change segment interpolation</ListItem>
+							<ListItem>Mousewheel to change selection radius</ListItem>
+							<ListItem>Alt + Drag on handle to synchronize handles</ListItem>
+							<ListItem>Drag + Ctrl to use snapping</ListItem>
+						</UnorderedList>
+					</div>
+					<div class="reset">
+						<ButtonSet>
+							<Button style="width: auto; padding-right: 15px" on:click={zoomIn}>+</Button>
+							<Button style="width: auto; padding-right: 15px" on:click={zoomOut}>-</Button>
+							<Button style="width: auto;" on:click={reset}>Reset Graph</Button>
+						</ButtonSet>
+					</div>
+				</div>
+			</Column>
+		</Row>
+	</Tile>
 
-	<p class="absolute left-1/2 transform -translate-x-1/2  top-[calc(100%+6px)]">x</p>
+	<Row style="margin-top: 40px">
+		<Column style="padding-bottom: 0">
+			<h2>Animation</h2>
+		</Column>
+	</Row>
+	<Row>
+		<Column style="position: relative">
+			<Button on:click={() => (state.view.isAnimating = !state.view.isAnimating)}
+				>{state.view.isAnimating ? 'Stop Animation' : 'Start Animation'}</Button
+			>
+		</Column>
+		<Column>
+			<Slider
+				labelText="Animation Speed"
+				hideTextInput
+				bind:value={speed}
+				min={0.0001}
+				max={0.1}
+				step={0.00001}
+			/>
+		</Column>
+	</Row>
+	<Row>
+		<Column style="padding-top: 0; padding-bottom: 0">
+			<div style="background-color: #F4F4F4">
+				<div
+					style={`position: relative; will-change: left; background-color: #0f62fe; width: 50px; height: 50px; left: calc(${
+						y * 100
+					}% - ${
+						y * 50
+					}px); display: flex; flex-direction: row; justify-content: center; align-items: center`}
+				>
+					<small style="color: white">{y.toFixed(2)}</small>
+				</div>
+			</div>
+		</Column>
+	</Row>
 
-	<p class="absolute top-1/2 transform -translate-y-1/2 left-[-20px]">y</p>
+	<Row style="margin-top: 40px">
+		<Column style="padding-bottom: 0">
+			<h2>Function</h2>
+		</Column>
+	</Row>
+	<Row>
+		<Column>
+			<Tile>
+				<Toggle
+					style="margin-bottom: 20px"
+					bind:toggled={state.useTypeScript}
+					labelText="TypeScript"
+				/>
+				<CodeSnippet
+					style="max-width: unset"
+					light
+					type="multi"
+					code={state.useTypeScript ? state.fnTs : state.fnJs}
+				/>
+			</Tile>
+		</Column>
+	</Row>
+</Grid>
 
-	<p class="absolute top-[calc(100%+6px)] -left-6">0,0</p>
+<style lang="postcss">
+	.controls-column {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		justify-content: space-between;
+		height: 100%;
+	}
 
-	<p class="absolute top-[-30px] left-full">1,1</p>
-</div>
-
-<div class="m-10 font-mono">
-	<button on:click={reset} class="px-8 py-2 bg-red-500 rounded text-white mb-5">Reset</button>
-</div>
-
-<div class="m-10">
-	<!-- {#if resultCircle}
-		<pre class="mb-10">
-			 <code>
-Test:
-x: {resultCircle.position.x / state.view.size}
-y: {resultCircle.position.x / state.view.size}
-			 </code>
-		 </pre>
-	{/if} -->
-
-	<pre
-		class="p-4 bg-gray-200 overflow-scroll max-w-full rounded"
-		class:bg-red-300={state.fnHasError}>
-	<button
-			bind:this={copyBtn}
-			data-clipboard-target="#fn"
-			class="font-sans px-8 py-2 bg-green-500 rounded text-white mb-5">Copy to Clipboard</button
-		>
-<code class="text-xs" id="fn">{fnstart}{fnBody}{fnEnd}</code>
-  </pre>
-</div>
-
-<div class="m-10">
-	<div class="flex flex-row space-x-4">
-		<button
-			class:bg-red-500={state.view.isAnimating}
-			class:bg-green-500={!state.view.isAnimating}
-			class="px-8 py-2 rounded text-white mb-5"
-			on:click={() => (state.view.isAnimating = !state.view.isAnimating)}
-			>{state.view.isAnimating ? 'Stop Animation' : 'Start Animation'}</button
-		>
-
-		<div class="flex flex-row i">
-			<p>Speed</p>
-			<input type="range" bind:value={speed} min="0.0001" max="0.1" step="0.00001" />
-		</div>
-	</div>
-
-	<div
-		class="h-20 w-20 bg-red-500 rounded"
-		style={`will-change: transform; transform: translateX(${y * 400}px)`}
-	/>
-</div>
+	.controls-top {
+		display: flex;
+		flex-direction: column;
+	}
+</style>
