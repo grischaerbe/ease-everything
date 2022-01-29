@@ -111,14 +111,14 @@ export const drawGridLines = (
 		const topPoint = new paper.Point(xPos, boundingRect.top)
 		const bottomPoint = new paper.Point(xPos, boundingRect.bottom)
 		const aLine = new paper.Path.Line(topPoint, bottomPoint)
-		aLine.strokeColor = new paper.Color('#dddddd')
+		aLine.strokeColor = '#dddddd'
 	}
 	for (let i = 0; i <= num_rectangles_tall; i++) {
 		const yPos = boundingRect.top + i * height_per_rectangle
 		const leftPoint = new paper.Point(boundingRect.left, yPos)
 		const rightPoint = new paper.Point(boundingRect.right, yPos)
 		const aLine = new paper.Path.Line(leftPoint, rightPoint)
-		aLine.strokeColor = new paper.Color('#dddddd')
+		aLine.strokeColor = '#dddddd'
 	}
 }
 
@@ -371,9 +371,9 @@ export const maybeAddSelectedItem = (e: paper.MouseEvent, state: EditorState) =>
 	}
 }
 
-const primaryColor = new paper.Color('#0F61FE')
-const secondaryColor = new paper.Color('#D91E28')
-const whiteColor = new paper.Color('white')
+const primaryColor = '#0F61FE'
+const secondaryColor = '#D91E28'
+const whiteColor = 'white'
 export const drawGraph = (state: EditorState) => {
 	if (!state.path || !state.layers.segments || !state.layers.default) return
 

@@ -102,7 +102,7 @@
 
 		selectedCircle = new paper.Shape.Circle(new paper.Point(0, 0), 10)
 		selectedCircle.visible = false
-		selectedCircle.fillColor = new paper.Color('rgb(209, 213, 219, 0.6)')
+		selectedCircle.fillColor = rgb(209, 213, 219, 0.6)
 	}
 
 	onMount(() => {
@@ -128,7 +128,7 @@
 			p.lineTo(new paper.Point([state.view.size, state.view.size]))
 		}
 
-		p.strokeColor = new paper.Color('#0F61FE')
+		p.strokeColor = '#0F61FE'
 		p.strokeWidth = 2
 		p.fullySelected = false
 
@@ -146,7 +146,7 @@
 			new paper.Point(0, 0),
 			new paper.Size(state.view.size, state.view.size)
 		)
-		bg.fillColor = new paper.Color('white')
+		bg.fillColor = 'white'
 		state.layers.background.sendToBack()
 
 		state.layers.segments = new paper.Layer()
@@ -304,7 +304,7 @@
 
 		if (!animationCircle) {
 			animationCircle = new paper.Shape.Circle(new paper.Point(0, 0), 10)
-			animationCircle.fillColor = new paper.Color('#0F61FE')
+			animationCircle.fillColor = '#0F61FE'
 		} else {
 			animationCircle.visible = true
 		}
