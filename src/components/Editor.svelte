@@ -46,11 +46,6 @@
 </script>
 
 <script lang="ts">
-	// const r = interpolate(0.1)
-	// console.log('r', r)
-
-	import { settings } from 'paper/dist/paper-core'
-
 	let canvas: HTMLCanvasElement | undefined
 
 	const state: EditorState = {
