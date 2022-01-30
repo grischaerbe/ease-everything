@@ -44,7 +44,6 @@
 
 <script lang="ts">
 	let canvas: HTMLCanvasElement | undefined
-	let copyBtn: HTMLButtonElement | undefined
 
 	const state: EditorState = {
 		view: {
