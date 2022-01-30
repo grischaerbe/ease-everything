@@ -439,22 +439,8 @@ export const isFirstOrLastSegment = (item: SelectedItem) => {
 	return item.segment.isLast() || item.segment.isFirst()
 }
 
-export const mirrorHandle = (
-	segment: paper.Segment,
-	leader: 'handle-in' | 'handle-out',
-	state: EditorState
-) => {
-	const leaderHandle = leader === 'handle-in' ? segment.handleIn : segment.handleOut
-	const followerHandle = leader === 'handle-in' ? segment.handleOut : segment.handleIn
-	const newFollowerHandlePoint = leaderHandle.multiply(-1)
-	const newFollowerHandlePointAbs = segment.point.add(newFollowerHandlePoint)
-	const newFollowerHandlePointClamped = clampHandleToNormalizedX(
-		segment,
-		leader === 'handle-in' ? 'handle-out' : 'handle-in',
-		newFollowerHandlePointAbs,
-		state
-	)
-	followerHandle.set(newFollowerHandlePointClamped)
+export const mirrorHandle = (leaderHandle: paper.Point, followerHandle: paper.Point) => {
+	followerHandle.set(leaderHandle.multiply(-1))
 }
 
 export const clampPointToNormalizedX = (point: paper.Point, state: EditorState) => {
@@ -496,6 +482,24 @@ export const clampHandleToNormalizedX = (
 	return h
 }
 
+export const clampAllHandles = (state: EditorState) => {
+	if (!state.path) return
+	const segments = state.path.segments
+
+	segments.forEach((segment) => {
+		;[segment.handleIn, segment.handleOut].forEach((h, i) => {
+			h.set(
+				clampHandleToNormalizedX(
+					segment,
+					i === 0 ? 'handle-in' : 'handle-out',
+					segment.point.add(h),
+					state
+				)
+			)
+		})
+	})
+}
+
 export const transformSelectedItems = (e: paper.MouseEvent, state: EditorState) => {
 	if (!state.selectedItems.length) return
 
@@ -516,17 +520,15 @@ export const transformSelectedItems = (e: paper.MouseEvent, state: EditorState) 
 			if (e.modifiers.control) {
 				newPoint = snapToGrid(newPoint, state)
 			}
-			const clampedNewPoint = clampHandleToNormalizedX(item.segment, 'handle-in', newPoint, state)
-			item.segment.handleIn.set(clampedNewPoint)
-			if (e.modifiers.alt) mirrorHandle(item.segment, 'handle-in', state)
+			item.segment.handleIn.set(newPoint.subtract(item.segment.point))
+			if (e.modifiers.alt) mirrorHandle(item.segment.handleIn, item.segment.handleOut)
 		} else if (item.item === 'handle-out') {
 			let newPoint = item.frozenPoint.add(mouseDelta)
 			if (e.modifiers.control) {
 				newPoint = snapToGrid(newPoint, state)
 			}
-			const clampedNewPoint = clampHandleToNormalizedX(item.segment, 'handle-out', newPoint, state)
-			item.segment.handleOut.set(clampedNewPoint)
-			if (e.modifiers.alt) mirrorHandle(item.segment, 'handle-out', state)
+			item.segment.handleOut.set(newPoint.subtract(item.segment.point))
+			if (e.modifiers.alt) mirrorHandle(item.segment.handleOut, item.segment.handleIn)
 		} else if (item.item === 'segment') {
 			let newPoint = item.frozenPoint.add(mouseDelta)
 			if (e.modifiers.control) {
@@ -543,6 +545,8 @@ export const transformSelectedItems = (e: paper.MouseEvent, state: EditorState) 
 			}
 		}
 	})
+
+	clampAllHandles(state)
 }
 
 /**

@@ -5,6 +5,7 @@
 	import { useWheel } from '$hooks/useWheel'
 	import {
 		addSelectedItem,
+		clampAllHandles,
 		clearSelectedItems,
 		deleteSelectedItems,
 		drawGraph,
@@ -19,10 +20,7 @@
 		resetGrid,
 		resetZoom,
 		setCursor,
-		transformSelectedItems,
-		zoom,
-		zoomIn,
-		zoomOut
+		transformSelectedItems
 	} from '$lib/editorUtils'
 	import { toTypeColor } from '$lib/paperUtils'
 	import type { EditorState, SelectedItem } from '$lib/types'
@@ -181,6 +179,8 @@
 
 		if (!modifiedSelectedItems) {
 			maybeAddSelectedItem(e, state)
+		} else {
+			clampAllHandles(state)
 		}
 
 		drawGraph(state)
@@ -464,12 +464,9 @@
 					bind:toggled={state.useTypeScript}
 					labelText="TypeScript"
 				/>
-				<CodeSnippet
-					style="max-width: unset"
-					light
-					type="multi"
-					code={state.useTypeScript ? state.fnTs : state.fnJs}
-				/>
+				<div class="code-snippet">
+					<CodeSnippet light type="multi" code={state.useTypeScript ? state.fnTs : state.fnJs} />
+				</div>
 			</Tile>
 		</Column>
 	</Row>
@@ -487,5 +484,9 @@
 	.controls-top {
 		display: flex;
 		flex-direction: column;
+	}
+
+	.code-snippet > :global(div) {
+		max-width: unset !important;
 	}
 </style>
