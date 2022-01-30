@@ -1,6 +1,6 @@
 import adapter from '@sveltejs/adapter-static'
 import preprocess from 'svelte-preprocess'
-import { optimizeImports, optimizeCss } from 'carbon-preprocess-svelte'
+import { optimizeCss } from 'carbon-preprocess-svelte'
 
 import { resolve } from 'path'
 
@@ -12,7 +12,6 @@ const config = {
 		preprocess({
 			postcss: true
 		}),
-		optimizeImports()
 	],
 
 	kit: {

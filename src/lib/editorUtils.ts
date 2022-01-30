@@ -373,7 +373,7 @@ export const maybeAddSelectedItem = (e: paper.MouseEvent, state: EditorState) =>
 }
 
 const primaryColor = toTypeColor('#0F61FE')
-const secondaryColor = toTypeColor('#D91E28')
+// const secondaryColor = toTypeColor('#D91E28')
 const whiteColor = toTypeColor('white')
 export const drawGraph = (state: EditorState) => {
 	if (!state.path || !state.layers.segments || !state.layers.default) return
@@ -439,8 +439,61 @@ export const isFirstOrLastSegment = (item: SelectedItem) => {
 	return item.segment.isLast() || item.segment.isFirst()
 }
 
-export const mirrorHandle = (leaderHandle: paper.Point, followerHandle: paper.Point) => {
-	followerHandle.set(leaderHandle.multiply(-1))
+export const mirrorHandle = (
+	segment: paper.Segment,
+	leader: 'handle-in' | 'handle-out',
+	state: EditorState
+) => {
+	const leaderHandle = leader === 'handle-in' ? segment.handleIn : segment.handleOut
+	const followerHandle = leader === 'handle-in' ? segment.handleOut : segment.handleIn
+	const newFollowerHandlePoint = leaderHandle.multiply(-1)
+	const newFollowerHandlePointAbs = segment.point.add(newFollowerHandlePoint)
+	const newFollowerHandlePointClamped = clampHandleToNormalizedX(
+		segment,
+		leader === 'handle-in' ? 'handle-out' : 'handle-in',
+		newFollowerHandlePointAbs,
+		state
+	)
+	followerHandle.set(newFollowerHandlePointClamped)
+}
+
+export const clampPointToNormalizedX = (point: paper.Point, state: EditorState) => {
+	const pointCloned = point.clone()
+	pointCloned.x = Math.min(Math.max(pointCloned.x, 0), 1 * state.view.size)
+	return pointCloned
+}
+
+/**
+ * Returns the segment point based (!) handle
+ * @param segment
+ * @param handle
+ * @param target Absolute target of the handle
+ * @param state
+ * @returns
+ */
+export const clampHandleToNormalizedX = (
+	segment: paper.Segment,
+	handle: 'handle-in' | 'handle-out',
+	target: paper.Point,
+	state: EditorState
+) => {
+	const h = handle === 'handle-in' ? segment.handleIn : segment.handleOut
+	const needsFitting = target.x > 1 * state.view.size || target.x < 0
+	if (!needsFitting) return target.subtract(segment.point)
+	const limit: 'upper' | 'lower' = target.x > 1 ? 'upper' : 'lower'
+	const testPath = new paper.Path.Line(segment.point, target)
+	const xLimit = limit === 'lower' ? 0 : 1 * state.view.size
+	const boundsPath = new paper.Path.Line(
+		new paper.Point(xLimit, -2000),
+		new paper.Point(xLimit, 2000)
+	)
+	const intersections = testPath.getIntersections(boundsPath)
+	if (intersections.length > 0) {
+		const newHandlePointAbs = intersections[0].point
+		newHandlePointAbs.x = Math.min(Math.max(newHandlePointAbs.x, 0), state.view.size)
+		return newHandlePointAbs.subtract(segment.point)
+	}
+	return h
 }
 
 export const transformSelectedItems = (e: paper.MouseEvent, state: EditorState) => {
@@ -463,15 +516,17 @@ export const transformSelectedItems = (e: paper.MouseEvent, state: EditorState) 
 			if (e.modifiers.control) {
 				newPoint = snapToGrid(newPoint, state)
 			}
-			item.segment.handleIn.set(newPoint.subtract(item.segment.point))
-			if (e.modifiers.alt) mirrorHandle(item.segment.handleIn, item.segment.handleOut)
+			const clampedNewPoint = clampHandleToNormalizedX(item.segment, 'handle-in', newPoint, state)
+			item.segment.handleIn.set(clampedNewPoint)
+			if (e.modifiers.alt) mirrorHandle(item.segment, 'handle-in', state)
 		} else if (item.item === 'handle-out') {
 			let newPoint = item.frozenPoint.add(mouseDelta)
 			if (e.modifiers.control) {
 				newPoint = snapToGrid(newPoint, state)
 			}
-			item.segment.handleOut.set(newPoint.subtract(item.segment.point))
-			if (e.modifiers.alt) mirrorHandle(item.segment.handleOut, item.segment.handleIn)
+			const clampedNewPoint = clampHandleToNormalizedX(item.segment, 'handle-out', newPoint, state)
+			item.segment.handleOut.set(clampedNewPoint)
+			if (e.modifiers.alt) mirrorHandle(item.segment, 'handle-out', state)
 		} else if (item.item === 'segment') {
 			let newPoint = item.frozenPoint.add(mouseDelta)
 			if (e.modifiers.control) {
@@ -483,6 +538,8 @@ export const transformSelectedItems = (e: paper.MouseEvent, state: EditorState) 
 				item.segment.point.x = 0
 			} else if (item.segment.isLast()) {
 				item.segment.point.x = 1 * state.view.size
+			} else {
+				item.segment.point.x = Math.min(Math.max(newPoint.x, 0), 1 * state.view.size)
 			}
 		}
 	})
@@ -611,15 +668,7 @@ export const setCursor = (cursor: EditorState['mouse']['cursor'], state: EditorS
 	state.mouse.cursor = cursor
 }
 
-export const zoomIn = () => {
-	paper.view.scale(1.1)
-}
-
-export const zoomOut = () => {
-	paper.view.scale(0.9)
-}
-
 export const resetZoom = (state: EditorState) => {
-	paper.view.scaling = new paper.Point(0.8, -0.8)
+	paper.view.scaling = new paper.Point(0.95, -0.95)
 	paper.view.center = new paper.Point(state.view.size / 2, state.view.size / 2)
 }

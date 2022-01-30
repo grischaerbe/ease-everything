@@ -20,6 +20,7 @@
 		resetZoom,
 		setCursor,
 		transformSelectedItems,
+		zoom,
 		zoomIn,
 		zoomOut
 	} from '$lib/editorUtils'
@@ -78,7 +79,7 @@
 	}
 	const getState = () => state
 	const stateUpdated = (reason?: string) => {
-		if (reason) console.log(reason)
+		if (reason) console.log('state updated:', reason)
 		state.path = state.path
 	}
 
@@ -236,7 +237,6 @@
 		if (state.path) {
 			const pathJson = state.path.exportJSON()
 			if (pathJson === state.previousPathJson) {
-				console.log('path did not change, returning')
 				return
 			}
 
@@ -328,12 +328,9 @@
 
 	const { mouseWheelAction } = useWheel((e) => {
 		e.preventDefault()
-		const newTolerance = state.tolerance + e.deltaY
-		if (newTolerance > 5 && newTolerance < 200) {
-			getState().tolerance = newTolerance
-			if (!selectionToolCircle) return
-			selectionToolCircle.radius = state.tolerance
-		}
+		const zoomAmount = -e.deltaY
+		const p = paper.view.getEventPoint(e as unknown as paper.Event)
+		paper.view.scale(1 + zoomAmount * 0.005, p)
 	})
 
 	const reset = () => {
@@ -397,15 +394,15 @@
 							<ListItem>Shift + Click to add point to selection</ListItem>
 							<ListItem>Drag to transform selection</ListItem>
 							<ListItem>Alt + Click to change segment interpolation</ListItem>
-							<ListItem>Mousewheel to change selection radius</ListItem>
 							<ListItem>Alt + Drag on handle to synchronize handles</ListItem>
 							<ListItem>Drag + Ctrl to use snapping</ListItem>
+							<br />
+							<ListItem>Mousewheel to zoom</ListItem>
 						</UnorderedList>
 					</div>
 					<div class="reset">
 						<ButtonSet>
-							<Button style="width: auto; padding-right: 15px" on:click={zoomIn}>+</Button>
-							<Button style="width: auto; padding-right: 15px" on:click={zoomOut}>-</Button>
+							<Button style="width: auto;" on:click={() => resetZoom(state)}>Reset View</Button>
 							<Button style="width: auto;" on:click={reset}>Reset Graph</Button>
 						</ButtonSet>
 					</div>
@@ -421,7 +418,9 @@
 	</Row>
 	<Row>
 		<Column style="position: relative">
-			<Button on:click={() => (state.view.isAnimating = !state.view.isAnimating)}
+			<Button
+				disabled={state.fnHasError}
+				on:click={() => (state.view.isAnimating = !state.view.isAnimating)}
 				>{state.view.isAnimating ? 'Stop Animation' : 'Start Animation'}</Button
 			>
 		</Column>

@@ -2,7 +2,7 @@ import type * as paper from 'paper'
 
 export type SelectedItem = {
 	segment: paper.Segment
-	item: 'segment' | 'handle-in' | 'handle-out'
+	item: 'segment' | 'handle-in' | 'handle-out' | 'stroke'
 }
 
 export type SelectedItems = (SelectedItem & {
