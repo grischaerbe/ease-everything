@@ -36,13 +36,21 @@
 		Slider,
 		Tile,
 		Toggle,
-		UnorderedList
+		UnorderedList,
+		RadioButtonGroup,
+		RadioButton,
+		Tooltip
 	} from 'carbon-components-svelte'
 	import * as paper from 'paper'
 	import { onMount } from 'svelte'
 </script>
 
 <script lang="ts">
+	// const r = interpolate(0.1)
+	// console.log('r', r)
+
+	import { settings } from 'paper/dist/paper-core'
+
 	let canvas: HTMLCanvasElement | undefined
 
 	const state: EditorState = {
@@ -57,14 +65,23 @@
 			lastMouseDownEvent: undefined,
 			cursor: 'cursor-crosshair'
 		},
-		fn: new Function('t', 'return t'),
-		fnJs: '',
-		fnTs: '',
+		settings: {
+			useSampling: false,
+			useTypeScript: false,
+			precision: 0.1
+		},
+		fn: {
+			fn: new Function('t', 'return t'),
+			fnJs: '',
+			fnTs: '',
+			sampled: false,
+			precision: 0.1,
+			fnHasError: false,
+			performance: 0
+		},
 		mounted: false,
-		fnHasError: false,
 		selectedItems: [],
 		tolerance: 20,
-		useTypeScript: false,
 		layers: {
 			background: undefined,
 			default: undefined,
@@ -235,7 +252,11 @@
 	const calculateFunction = () => {
 		if (state.path) {
 			const pathJson = state.path.exportJSON()
-			if (pathJson === state.previousPathJson) {
+			if (
+				pathJson === state.previousPathJson &&
+				state.settings.useSampling === state.fn.sampled &&
+				state.settings.precision === state.fn.precision
+			) {
 				return
 			}
 
@@ -244,14 +265,16 @@
 			try {
 				const result = functionFromPath(scaledPath, state)
 
-				state.fn = result.fn
-				state.fnJs = result.fnJs
-				state.fnTs = result.fnTs
-				state.fnHasError = false
+				state.fn.fn = result.fn
+				state.fn.fnJs = result.fnJs
+				state.fn.fnTs = result.fnTs
+				state.fn.performance = result.performance
+				state.fn.sampled = result.sampled
+				state.fn.fnHasError = false
 			} catch (error) {
-				state.fnHasError = true
+				state.fn.fnHasError = true
 			}
-			if (!state.fnHasError) {
+			if (!state.fn.fnHasError) {
 				replaceStateWithQuery({
 					path: pathJson
 				})
@@ -289,11 +312,11 @@
 	}
 
 	let t = 0
-	let y = state.fn(t)
+	let y = state.fn.fn(t)
 	let speed = 0.005
 	let animationCircle: paper.Shape.Circle | undefined
 	useRaf(() => {
-		if (state.fnHasError || !state.mounted || state.mouse.isMouseDown) {
+		if (state.fn.fnHasError || !state.mounted || state.mouse.isMouseDown) {
 			if (animationCircle) animationCircle.visible = false
 			return
 		}
@@ -310,7 +333,7 @@
 		}
 
 		t += speed
-		y = state.fn(t)
+		y = state.fn.fn(t)
 
 		animationCircle.position.set(new paper.Point(t * state.view.size, y * state.view.size))
 
@@ -430,7 +453,7 @@
 	<Row>
 		<Column style="position: relative">
 			<Button
-				disabled={state.fnHasError}
+				disabled={state.fn.fnHasError}
 				on:click={() => (state.view.isAnimating = !state.view.isAnimating)}
 				>{state.view.isAnimating ? 'Stop Animation' : 'Start Animation'}</Button
 			>
@@ -470,20 +493,70 @@
 	<Row>
 		<Column>
 			<Tile>
-				<Toggle
-					style="margin-bottom: 20px"
-					bind:toggled={state.useTypeScript}
-					labelText="TypeScript"
-				/>
-				<div class="code-snippet">
-					<CodeSnippet light type="multi" code={state.useTypeScript ? state.fnTs : state.fnJs} />
+				<div>
+					<p style="max-width: 65ch; margin-bottom: 20px">
+						Ease Everything provides a precise function for high fidelity applications and a
+						function interpolating between samples for performance critical applications.
+					</p>
+					<RadioButtonGroup
+						orientation="vertical"
+						selected={state.settings.useSampling ? 'sampling' : 'precise'}
+						style="margin-bottom: 20px"
+						legendText="Function type"
+						on:change={(e) => (state.settings.useSampling = e.detail === 'sampling')}
+					>
+						<RadioButton labelText="Precise" value="precise" />
+						<RadioButton labelText="Sampling" value="sampling" />
+					</RadioButtonGroup>
+					{#if state.settings.useSampling}
+						<Slider
+							on:change={(e) => (state.settings.precision = e.detail)}
+							style="margin-bottom: 20px;"
+							labelText="Sampling Precision"
+							hideTextInput
+							value={state.settings.precision}
+							min={0.001}
+							max={0.2}
+							step={0.00001}
+						/>
+					{/if}
+					<div class="fn-toggles">
+						<Toggle
+							style="margin-bottom: 20px"
+							bind:toggled={state.settings.useTypeScript}
+							labelText="TypeScript"
+						/>
+					</div>
 				</div>
+				<div class="code-snippet">
+					<CodeSnippet
+						light
+						type="multi"
+						code={state.settings.useTypeScript ? state.fn.fnTs : state.fn.fnJs}
+					/>
+				</div>
+				{#if state.fn.performance > 0}
+					<div style="margin-top: 10px">
+						<small>({state.fn.performance.toFixed(2)} ms/1000 invocations)</small>
+					</div>
+				{/if}
 			</Tile>
 		</Column>
 	</Row>
 </Grid>
 
 <style lang="postcss">
+	.fn-toggles {
+		position: relative;
+		display: flex;
+		flex-direction: row;
+		justify-content: flex-start;
+	}
+
+	.fn-toggles > :global(div) {
+		flex: 0;
+	}
+
 	.controls-column {
 		display: flex;
 		flex-direction: column;

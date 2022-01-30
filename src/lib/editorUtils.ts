@@ -3,6 +3,7 @@ import parserTypeScript from 'prettier/parser-typescript.js'
 import prettier from 'prettier/standalone.js'
 import { bezierUtils } from './bezierUtils'
 import { toTypeColor } from './paperUtils'
+import { getSampleFunction } from './sampleLookupFunction'
 import type { EditorState, SelectedItem } from './types'
 
 export const transpileCode = (code: string) => {
@@ -14,6 +15,7 @@ export const transpileCode = (code: string) => {
 export const formatCode = (code: string) => {
 	return prettier.format(code, {
 		parser: 'typescript',
+		semi: false,
 		plugins: [parserTypeScript]
 	})
 }
@@ -150,6 +152,48 @@ const getBezierReturn = (
 	return `return map(b(${h0x}, ${h0y}, ${h1x}, ${h1y})(((t - ${p0.x}) * (1 - 0)) / (${p1.x} - ${p0.x}) + 0 * 2), 0, 1, ${p0.y}, ${p1.y});`
 }
 
+const getSmaples = (fn: (t: number) => number, path: paper.Path, state: EditorState) => {
+	const xValues: [number, number][] = []
+	const yValues: number[][] = []
+
+	path.segments
+		.filter((s) => !s.isLast())
+		.forEach((segment) => {
+			const from = segment.point.x
+			const to = segment.next.point.x
+			xValues.push([from, to])
+			const isLinear = segment.handleOut.length === 0 && segment.next.handleIn.length === 0
+			if (isLinear) {
+				const fromValueY = fn(from)
+				const toValueY = fn(to)
+				yValues.push([fromValueY, toValueY])
+			} else {
+				const sampleCount = Math.ceil(map(1 / state.settings.precision, 0, 1, from, to))
+				const samples: number[] = []
+				for (let index = 0; index <= sampleCount; index += 1) {
+					const t = map(index / sampleCount, 0, 1, from, to)
+					const sample = fn(t)
+					samples.push(sample)
+				}
+				yValues.push(samples)
+			}
+		})
+
+	return {
+		xValues,
+		yValues
+	}
+}
+
+const benchmarkFunction = (fn: (t: number) => number, count = 1000): number => {
+	const start = performance.now()
+	for (let index = 0; index < count; index++) {
+		const t = index / (count - 1)
+		fn(t)
+	}
+	return performance.now() - start
+}
+
 /**
  * Returns a function to project t to an arbitrary path
  * @param path The provided path, must be normalized to the length of x === 1
@@ -162,7 +206,10 @@ export const functionFromPath = (
 	fn: Function
 	fnJs: string
 	fnTs: string
+	performance: number
+	sampled: boolean
 } => {
+	let sampled = false
 	let fnBodyTs = path.segments.reduce((acc, s) => {
 		if (acc.length || !s.point || !s.next || !s.next.point) return acc
 		const linear = s.handleOut.length === 0 && s.next.handleIn.length === 0
@@ -210,17 +257,13 @@ export const functionFromPath = (
 		}
 	})
 
-	const fnBodyJs = transpileCode(fnBodyTs)
-	const newFn = new Function('t', fnBodyJs)
-	const fnJs = formatCode(`function interpolate(t) {${fnBodyJs}}`)
-	const fnTs = formatCode(`function interpolate(t: number) {${fnBodyTs}}`)
+	let fnBodyJs = transpileCode(fnBodyTs)
+	let newFn = new Function('t', fnBodyJs)
 
-	for (let t = 0; t <= 1; t += 0.01) {
-		try {
-			newFn(t)
-		} catch (error) {
-			throw new Error('Function has errors')
-		}
+	try {
+		benchmarkFunction(newFn as (t: number) => number, 100)
+	} catch (error) {
+		throw new Error('Function has errors')
 	}
 
 	const edges = [0, 1]
@@ -232,10 +275,31 @@ export const functionFromPath = (
 		}
 	})
 
+	if (state.settings.useSampling) {
+		sampled = true
+		const { xValues, yValues } = getSmaples(newFn as (t: number) => number, path, state)
+		fnBodyTs = getSampleFunction(xValues, yValues)
+		fnBodyJs = transpileCode(fnBodyTs)
+		newFn = new Function('t', fnBodyJs)
+	}
+
+	const fnJs = formatCode(`function interpolate(t) {${fnBodyJs}}`)
+	const fnTs = formatCode(`function interpolate(t: number) {${fnBodyTs}}`)
+
+	const performance = benchmarkFunction(newFn as (t: number) => number)
+
+	try {
+		benchmarkFunction(newFn as (t: number) => number, 100)
+	} catch (error) {
+		throw new Error('Function has errors')
+	}
+
 	return {
+		sampled,
 		fn: newFn,
 		fnJs,
-		fnTs
+		fnTs,
+		performance
 	}
 }
 

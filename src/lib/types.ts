@@ -23,13 +23,22 @@ export type EditorState = {
 		isMouseDown: boolean
 		cursor: 'cursor-crosshair' | 'cursor-grabbing' | 'cursor-copy'
 	}
-	// eslint-disable-next-line @typescript-eslint/ban-types
-	fn: Function
-	fnTs: string
-	fnJs: string
-	useTypeScript: boolean
+	settings: {
+		useSampling: boolean
+		useTypeScript: boolean
+		precision: number
+	}
+	fn: {
+		// eslint-disable-next-line @typescript-eslint/ban-types
+		fn: Function
+		fnTs: string
+		fnJs: string
+		sampled: boolean
+		precision: number
+		fnHasError: boolean
+		performance: number
+	}
 	mounted: boolean
-	fnHasError: boolean
 	tolerance: number
 	layers: {
 		default: paper.Layer | undefined
