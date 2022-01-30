@@ -371,8 +371,8 @@
 			<p style="max-width: 65ch;">
 				Sometimes "ease-in" or "easeOutCubic" is just not butter enough.<br />
 				You need more freedom but doing the maths is hard.<br />
-				Ease Everything is transforming any deterministic easing graph you can draw into ready-to-use
-				functions for JavaScript and TypeScript.
+				Ease Everything is transforming any deterministic easing graph into ready-to-use functions for
+				JavaScript and TypeScript.
 			</p>
 		</Column>
 	</Row>
