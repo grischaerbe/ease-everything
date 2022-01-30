@@ -365,6 +365,18 @@
 </script>
 
 <Grid padding>
+	<Row style="margin-bottom: 20px">
+		<Column>
+			<h1 style="margin-bottom: 10px">Ease Everything</h1>
+			<p style="max-width: 65ch;">
+				Sometimes "ease-in" or "easeOutCubic" is just not butter enough.<br />
+				You need more freedom but doing the maths is hard.<br />
+				Ease Everything is transforming any deterministic easing graph you can draw into ready-to-use
+				functions for JavaScript and TypeScript.
+			</p>
+		</Column>
+	</Row>
+
 	<Row>
 		<Column>
 			<h2>Graph</h2>
