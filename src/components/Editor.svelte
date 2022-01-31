@@ -442,7 +442,7 @@
 
 	<Row style="margin-top: 40px">
 		<Column style="padding-bottom: 0">
-			<h2>Animation</h2>
+			<h2>Preview</h2>
 		</Column>
 	</Row>
 	<Row>
@@ -450,7 +450,7 @@
 			<Button
 				disabled={state.fn.fnHasError}
 				on:click={() => (state.view.isAnimating = !state.view.isAnimating)}
-				>{state.view.isAnimating ? 'Stop Animation' : 'Start Animation'}</Button
+				>{state.view.isAnimating ? 'Pause' : 'Play'}</Button
 			>
 		</Column>
 		<Column>
